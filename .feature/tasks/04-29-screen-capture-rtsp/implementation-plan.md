@@ -1224,4 +1224,23 @@ npm run tauri build
 **Risks / Notes**
 - GStreamer DLL 体积约 80-100MB，安装包会较大
 - 需要确认所有 GStreamer 插件 DLL 都被包含
-- NSIS 安装包可能需要管理员权限（用于 GStreamer DLL 注册）
+- NSIS 安�装包可能需要管理员权限（用于 GStreamer DLL 注册）
+
+---
+
+## Test Case Execution Phase
+
+**Preconditions**:
+- Test cases generated and verified (82 cases, 100% coverage)
+- Coverage rate meets threshold (>80%)
+
+**Steps**:
+- [ ] Run test cases during Phase 7 E2E testing
+- [ ] Record test results in progress.md
+- [ ] Fix failed cases
+- [ ] Update test case document if requirements change
+
+**Test Case Summary**:
+- Total: 82 cases (H:23, M:42, L:17)
+- Modules: 画面源管理, 推流控制, RTSP拉流, 编码配置, 远程反控, 热插拔, 编码降级, 异常处理, GPU检测, UI交互, 安全性, 性能指标, 综合场景
+- Verification report: `testcase_checkdetail.md`

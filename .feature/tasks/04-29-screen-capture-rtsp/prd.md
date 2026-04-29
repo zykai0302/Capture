@@ -218,3 +218,12 @@ d3d11screencapture monitor-index=0 ! nvh264enc bitrate=4000 ! rtph264pay ! rtspc
 | 码率控制 | CBR / VBR | VBR |
 | GOP 大小 | 10-120 | 30 |
 | 预设 | speed/quality/balanced | balanced |
+
+## Test Cases
+
+- Requirements Analysis: `testcase_analysis.md`
+- Test Case Document: `testcase.md`
+- Verification Report: `testcase_checkdetail.md`
+- Product Type: Screen Control (PK)
+- Coverage Rate: 100%
+- Total Cases: 82 (H:23, M:42, L:17)

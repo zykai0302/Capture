@@ -139,5 +139,42 @@ $env:CARGO_TARGET_DIR = 'e:\screencast-build'  # 避免中文路径导致的编�
 - Pipeline 状态轮询间隔: Pipeline 3s, Sources 5s, Remote 5s
 - 实时预览需要 GStreamer AppSink 集成（后续优化，当前使用 SVG 占位）
 
+## Testing Findings
+
+### Product Type
+- Type: Screen Control (PK)
+- Checklist: testcase_checklist_PK.md (自定义)
+
+### Coverage Analysis
+- Total test cases: 82 (H:23, M:42, L:17)
+- Coverage rate: 100%
+- Modules covered: 画面源管理(5), 推流控制(8), RTSP拉流(7), 编码配置(10), 远程反控(19), 热插拔(4), 编码降级(4), 异常处理(8), GPU检测(2), UI交互(3), 安全性(3), 性能指标(5), 综合场景(4)
+
+### Supplemented Test Points (20 cases added)
+- RTSP地址复制与格式验证
+- 多客户端拉同一RTSP流
+- 分辨率/预设/码控模式修改
+- 未推流时修改配置
+- 鼠标中键点击、多客户端并发连接与操控
+- 未认证发送指令被拒（安全性关键）
+- 仅CPU模式验证
+- 端口冲突（RTSP/WebSocket）
+- UI布局/Tab切换/Pipeline可视化
+- 反控响应时间<100ms、多路资源占用
+
+### Test Constraints
+- RTSP拉流测试需要VLC或FFplay
+- 反控测试需要WebSocket客户端（Python websocket-client 或浏览器）
+- 性能测试需要秒表或时间戳工具
+- 热插拔测试需要外接显示器
+- GPU降级测试需要可控的GPU驱动环境
+
+### Compound Learning (2026-04-30)
+- **核心学习**: 屏幕控制类(PK)产品的测试用例设计方法论
+- **关键发现**: 初始55个用例经模块交互检查后补充20个，最关键缺失为"未认证跳过认证发送指令"(安全边界)和"反控响应时间"(性能指标)
+- **方法论**: 对每个模块不仅检查功能覆盖，还要检查与其他模块的交互和边界条件
+- **安全边界测试模式**: 有效凭证→成功、无效凭证→拒绝、无凭证(跳过认证)→拒绝 — 第3项最易遗漏
+- **Solution文档**: `.feature/solutions/testing/screen-control-rtsp-testcase-design-2026-04-30.md`
+
 ---
 *Update this file after every 2 view/browser/search operations*

@@ -7,6 +7,7 @@
 ## Current Phase
 
 Phase 3-6 (Implementation) — 已完成，review/fix 完成，待 Phase 7-8
+Test Cases — 已生成并验证（82用例，100%覆盖率）
 
 ## Phases
 
