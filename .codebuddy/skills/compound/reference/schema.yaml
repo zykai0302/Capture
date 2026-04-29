@@ -1,0 +1,74 @@
+# Solution Document Schema
+
+# YAML frontmatter schema for solution documents
+
+frontmatter:
+  required:
+    - title
+    - date
+    - category
+    - module
+    - problem_type
+    - component
+    - severity
+    - tags
+
+  optional:
+    - applies_when
+    - related
+    - resolution_type
+    - symptoms
+    - root_cause
+
+# Problem types and their categories
+problem_types:
+  bug_track:
+    - build_error
+    - test_failure
+    - runtime_error
+    - performance_issue
+    - database_issue
+    - security_issue
+    - ui_bug
+    - integration_issue
+    - logic_error
+
+  knowledge_track:
+    - best_practice
+    - documentation_gap
+    - workflow_issue
+    - developer_experience
+
+# Category mapping
+categories:
+  bug_track:
+    - build-errors
+    - test-failures
+    - runtime-errors
+    - performance-issues
+    - database-issues
+    - security-issues
+    - ui-bugs
+    - integration-issues
+    - logic-errors
+
+  knowledge_track:
+    - best-practices
+    - documentation
+    - workflow-issues
+    - developer-experience
+
+# Severity levels
+severity:
+  - critical
+  - high
+  - medium
+  - low
+
+# Resolution types (for bug track)
+resolution_types:
+  - code_fix
+  - config_change
+  - dependency_update
+  - workaround
+  - documentation_update

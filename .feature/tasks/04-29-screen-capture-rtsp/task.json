@@ -1,0 +1,38 @@
+{
+  "id": "screen-capture-rtsp",
+  "name": "screen-capture-rtsp",
+  "title": "桌面抓屏软件 - 抓屏编码RTSP推流",
+  "description": "跨平台桌面抓屏软件，支持多路GPU编码RTSP推流和反控功能",
+  "status": "executing",
+  "executionMode": "inline",
+  "dev_type": "fullstack",
+  "scope": null,
+  "priority": "P1",
+  "creator": "zykai",
+  "assignee": "zykai",
+  "createdAt": "2026-04-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 3,
+  "next_action": [
+    {
+      "phase": 3,
+      "action": "executing-plans"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Execution started. Tech stack: Tauri+Rust+GStreamer+gst-rtsp-server",
+  "meta": {
+    "artifacts": ["prd.md", "task_plan.md", "findings.md", "progress.md", "implementation-plan.md", "test-cases.md"],
+    "prdValidated": true,
+    "planValidated": true,
+    "uiDesignPath": "design/ui-preview.html"
+  }
+}

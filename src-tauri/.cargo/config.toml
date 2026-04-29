@@ -1,0 +1,6 @@
+# GStreamer library search paths for Windows MSVC
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-L", "D:\\msvc_x86_64\\lib"]
+
+[env]
+GSTREAMER_1_0_ROOT_MSVC_X86_64 = "D:\\msvc_x86_64\\"
