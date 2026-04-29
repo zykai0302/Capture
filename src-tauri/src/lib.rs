@@ -18,6 +18,7 @@ use remote::injector::RemoteInjector;
 use remote::websocket::RemoteControlServer;
 use remote::RemoteStatus;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,

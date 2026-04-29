@@ -12,6 +12,7 @@ Use `@/.feature/` to learn:
 - Development workflow (`workflow.md`)
 - Project structure guidelines (`spec/`)
 - Developer workspace (`workspace/`)
+- **Solutions knowledge base** (`solutions/`) — reusable patterns for build issues, concurrency, testing, etc.
 
 Keep this managed block so 'feature update' can refresh the instructions.
 

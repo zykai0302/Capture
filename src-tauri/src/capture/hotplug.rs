@@ -1,6 +1,7 @@
 use crate::capture::platform::enumerate_sources;
 use crate::capture::source::CaptureSourceList;
 use crate::pipeline::manager::GstPipelineManager;
+use crate::pipeline::PipelineManager;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
