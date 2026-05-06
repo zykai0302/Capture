@@ -3855,6 +3855,8 @@ name = "screencast-pro"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "core-foundation",
+ "core-graphics 0.24.0",
  "enigo",
  "env_logger",
  "futures-util",

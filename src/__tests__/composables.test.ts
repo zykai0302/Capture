@@ -202,7 +202,8 @@ describe('useConfig', () => {
 
   it('loadGpuCapabilities populates gpuCaps', async () => {
     const mockGpu: GpuCapability = {
-      has_amf: true, has_mf: false, amf_encoders: ['amfh264enc'], mf_encoders: [],
+      has_amf: true, has_mf: false, has_videotoolbox: false, has_vaapi: false,
+      amf_encoders: ['amfh264enc'], mf_encoders: [], vt_encoders: [], vaapi_encoders: [],
     }
     invokeMock.mockResolvedValue(mockGpu)
 

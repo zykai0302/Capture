@@ -90,8 +90,12 @@ export interface PipelineStatus {
 export interface GpuCapability {
   has_amf: boolean
   has_mf: boolean
+  has_videotoolbox: boolean
+  has_vaapi: boolean
   amf_encoders: string[]
   mf_encoders: string[]
+  vt_encoders: string[]
+  vaapi_encoders: string[]
 }
 
 export interface AppConfig {

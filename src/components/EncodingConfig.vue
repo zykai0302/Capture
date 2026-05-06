@@ -60,6 +60,8 @@ function getGpuLabel(): string {
   if (!gpuCaps.value) return 'Detecting...'
   if (gpuCaps.value.has_amf) return 'AMD GPU (AMF)'
   if (gpuCaps.value.has_mf) return 'GPU (MF)'
+  if (gpuCaps.value.has_videotoolbox) return 'Apple GPU (VideoToolbox)'
+  if (gpuCaps.value.has_vaapi) return 'GPU (VAAPI)'
   return 'CPU Only'
 }
 </script>
@@ -166,7 +168,7 @@ function getGpuLabel(): string {
         <span class="config-label">GPU 编码能力</span>
         <div class="config-value">
           <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-green);">
-            {{ gpuCaps?.has_amf ? 'H.264 + H.265 (AMF)' : gpuCaps?.has_mf ? 'H.264 (MF)' : '无' }}
+            {{ gpuCaps?.has_amf ? 'H.264 + H.265 (AMF)' : gpuCaps?.has_mf ? 'H.264 (MF)' : gpuCaps?.has_videotoolbox ? 'H.264 + H.265 (VT)' : gpuCaps?.has_vaapi ? 'H.264 + H.265 (VAAPI)' : '无' }}
           </span>
         </div>
       </div>

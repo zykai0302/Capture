@@ -200,8 +200,12 @@ describe('GpuCapability', () => {
     const cap: GpuCapability = {
       has_amf: true,
       has_mf: false,
+      has_videotoolbox: false,
+      has_vaapi: false,
       amf_encoders: ['amfh264enc'],
       mf_encoders: [],
+      vt_encoders: [],
+      vaapi_encoders: [],
     }
     expect(cap.has_amf).toBe(true)
     expect(cap.amf_encoders).toHaveLength(1)

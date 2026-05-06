@@ -17,6 +17,8 @@ const gpuLabel = computed(() => {
   if (!gpuCaps.value) return ''
   if (gpuCaps.value.has_amf) return 'AMD GPU'
   if (gpuCaps.value.has_mf) return 'GPU (MF)'
+  if (gpuCaps.value.has_videotoolbox) return 'Apple GPU'
+  if (gpuCaps.value.has_vaapi) return 'GPU (VAAPI)'
   return 'CPU Only'
 })
 </script>

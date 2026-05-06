@@ -17,6 +17,8 @@ const gpuInfo = computed(() => {
   if (!gpuCaps.value) return 'Detecting...'
   if (gpuCaps.value.has_amf) return 'AMD GPU (AMF)'
   if (gpuCaps.value.has_mf) return 'GPU (MF)'
+  if (gpuCaps.value.has_videotoolbox) return 'Apple GPU (VideoToolbox)'
+  if (gpuCaps.value.has_vaapi) return 'GPU (VAAPI)'
   return 'CPU Only'
 })
 </script>
