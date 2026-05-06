@@ -23,8 +23,8 @@ const isRunning = computed(() =>
           </svg>
         </span>
         <span>
-          <div class="pipeline-node-label">DXGI 抓屏</div>
-          <div class="pipeline-node-detail">d3d11screencapturesrc</div>
+          <div class="pipeline-node-label">屏幕捕获</div>
+          <div class="pipeline-node-detail">d3d12screencapturesrc</div>
         </span>
       </div>
 

@@ -2,17 +2,26 @@ use crate::encode::config::{Codec, EncodeConfig, EncodeMode};
 use crate::capture::source::{CaptureSource, SourceType};
 
 /// Build a GStreamer launch string for screen capture + encode + RTP pay
+/// Returns a complete pipeline string for gst-rtsp-server
+/// Note: RTSPMediaFactory automatically handles pay0 naming
 pub fn build_launch_string(source: &CaptureSource, config: &EncodeConfig) -> String {
-    let capture_elem = match source.source_type {
+    let encoder_and_pay = match config.codec {
+        Codec::H264 => format!("x264enc bitrate={} ! rtph264pay", config.bitrate_kbps),
+        Codec::H265 => format!("x265enc bitrate={} ! rtph265pay", config.bitrate_kbps),
+    };
+
+    match source.source_type {
         SourceType::Monitor => {
             let monitor_idx: i32 = source
                 .id
                 .strip_prefix("screen-")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
+            // Use d3d12screencapturesrc — d3d11screencapturesrc fails in
+            // RTSP media threads because D3D11 device init fails there.
             format!(
-                "d3d11screencapturesrc monitor-index={} cursor=true ! d3d11download ! d3d11convert ! video/x-raw,format=NV12,framerate={}/1",
-                monitor_idx, config.framerate
+                "( d3d12screencapturesrc monitor-index={} ! videoconvert ! {} name=pay0 pt=96 )",
+                monitor_idx, encoder_and_pay
             )
         }
         SourceType::Window => {
@@ -22,23 +31,11 @@ pub fn build_launch_string(source: &CaptureSource, config: &EncodeConfig) -> Str
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0) as i64;
             format!(
-                "d3d11screencapturesrc window-handle={} cursor=true ! d3d11download ! d3d11convert ! video/x-raw,format=NV12,framerate={}/1",
-                hwnd, config.framerate
+                "( d3d12screencapturesrc window-handle={} ! videoconvert ! {} name=pay0 pt=96 )",
+                hwnd, encoder_and_pay
             )
         }
-    };
-
-    let encoder_elem = build_encoder_element(config);
-
-    let rtp_pay = match config.codec {
-        Codec::H264 => "rtph264pay name=pay0 pt=96".to_string(),
-        Codec::H265 => "rtph265pay name=pay0 pt=96".to_string(),
-    };
-
-    format!(
-        "( {} ! {} ! {} )",
-        capture_elem, encoder_elem, rtp_pay
-    )
+    }
 }
 
 /// Build encoder element string based on config and available hardware
@@ -327,7 +324,7 @@ mod tests {
             ..EncodeConfig::default()
         };
         let result = build_launch_string(&source, &config);
-        assert!(result.contains("rtph264pay name=pay0 pt=96"));
+        assert!(result.contains("rtph264pay"));
     }
 
     #[test]
@@ -339,34 +336,32 @@ mod tests {
             ..EncodeConfig::default()
         };
         let result = build_launch_string(&source, &config);
-        assert!(result.contains("rtph265pay name=pay0 pt=96"));
+        assert!(result.contains("rtph265pay"));
     }
 
     // === Capture source type tests ===
 
     #[test]
-    fn build_launch_string_monitor_uses_d3d11_screencapture() {
+    fn build_launch_string_monitor_uses_d3d12_screencapture() {
         let source = make_monitor("screen-0");
         let config = EncodeConfig {
             mode: EncodeMode::CpuOnly,
             ..EncodeConfig::default()
         };
         let result = build_launch_string(&source, &config);
-        assert!(result.contains("d3d11screencapturesrc"));
-        assert!(result.contains("d3d11download"));
-        assert!(result.contains("d3d11convert"));
-        assert!(result.contains("format=NV12"));
+        assert!(result.contains("d3d12screencapturesrc"));
+        assert!(result.contains("monitor-index=0"));
     }
 
     #[test]
-    fn build_launch_string_window_uses_d3d11_screencapture() {
+    fn build_launch_string_window_uses_d3d12_screencapture() {
         let source = make_window("window-100");
         let config = EncodeConfig {
             mode: EncodeMode::CpuOnly,
             ..EncodeConfig::default()
         };
         let result = build_launch_string(&source, &config);
-        assert!(result.contains("d3d11screencapturesrc"));
+        assert!(result.contains("d3d12screencapturesrc"));
         assert!(result.contains("window-handle=100"));
     }
 }
