@@ -6,7 +6,7 @@
 
 ## Overview
 
-This project's Rust backend follows strict concurrency safety rules due to the multi-Mutex architecture of `GstPipelineManager`. All GStreamer and Win32 API calls must respect async/blocking boundaries.
+This project's Rust backend follows strict concurrency safety rules due to the multi-Mutex architecture of `GstPipelineManager`. All GStreamer and OS API calls must respect async/blocking boundaries. The codebase uses `#[cfg(target_os)]` conditional compilation for cross-platform support (Windows + macOS + Linux).
 
 ---
 
@@ -21,6 +21,7 @@ This project's Rust backend follows strict concurrency safety rules due to the m
 | Calling blocking OS APIs in polling threads without timeout | Thread can hang forever on UAC/secure desktop | Use `mpsc::channel` + `recv_timeout` |
 | `_ =>` catch-all in enum match for distinct semantics | Silently degrades behavior | Use explicit arms for all variants |
 | `console.log` / `console.debug` in frontend | Noisy production logs | Use `log::info!` / `log::warn!` in Rust; `console.error` only for error tracking |
+| Platform-specific code without `#[cfg(target_os)]` guard | Compile error or runtime crash on other platforms | Use conditional compilation with platform-specific branches |
 
 ---
 
@@ -50,6 +51,39 @@ When a function needs both locks:
 3. Acquire `rtsp_server`
 4. Perform operation
 5. Release `rtsp_server`
+
+### Cross-Platform Conditional Compilation
+
+Platform-specific code must use `#[cfg(target_os)]`:
+
+```rust
+// Capture element — different GStreamer sources per platform
+fn build_capture_element(_source: &CaptureSource) -> &'static str {
+    #[cfg(target_os = "windows")]
+    { "d3d12screencapturesrc" }
+    #[cfg(target_os = "macos")]
+    { "avfvideosrc" }
+    #[cfg(target_os = "linux")]
+    { "ximagesrc" }
+}
+
+// GPU encoder candidates — platform-specific lists
+pub fn gpu_encoder_candidates(codec: &Codec) -> Vec<&'static str> {
+    #[cfg(target_os = "windows")]
+    { match codec { Codec::H264 => vec!["amfh264enc", ...], ... } }
+    #[cfg(target_os = "macos")]
+    { match codec { Codec::H264 => vec!["vtenc_h264"], ... } }
+    #[cfg(target_os = "linux")]
+    { match codec { Codec::H264 => vec!["vaapih264enc"], ... } }
+}
+```
+
+Platform-specific dependencies in `Cargo.toml`:
+```toml
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.24", features = ["highsierra"] }
+core-foundation = "0.10"
+```
 
 ### Serde Naming Convention
 

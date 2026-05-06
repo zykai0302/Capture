@@ -355,3 +355,42 @@ scripts/
 - Proceed to Phase 7 E2E testing
 - Run test cases during development
 - Record results in progress.md
+
+### Finish-Work Pre-Commit Checklist (2026-05-07)
+
+**Code Quality**:
+- [x] `vue-tsc --noEmit` — PASS (0 errors)
+- [x] `vitest run` — PASS (47/47 tests)
+- [x] `cargo check` — PASS (1 warning: dead_code `get_rtsp_url`)
+- [x] `cargo test` — PASS (75/75 tests) — **Fixed 2 failing tests** (RTP payloader missing in `build_encoder_element`)
+- [x] No `console.log` in `src/` — PASS
+- [x] No `any` types in `src/` — PASS
+- [x] No non-null assertions (`!`) in `src/` — PASS
+
+**Bug Fix During Finish-Work**:
+- `gst_pipeline.rs`: `build_encoder_element` refactoring (Phase 8 cross-platform) dropped RTP payloader from encoder output strings
+  - `build_cpu_encoder`: Added `! rtph264pay` / `! rtph265pay` suffixes
+  - `format_encoder_params`: Added `! {payloader}` suffix based on codec
+  - Updated 6 test assertions to match new output format
+
+**Spec Updates**:
+- [x] `backend/quality-guidelines.md` — Added cross-platform `#[cfg(target_os)]` pattern + forbidden pattern
+- [x] `guides/cross-layer-thinking-guide.md` — Added Cross-Platform Type Extension example (GpuCapability)
+
+**GitNexus**:
+- [ ] GitNexus analyze skipped (command timeout) — `.gitnexus/` may be stale
+
+**Changed Files Summary**:
+- Modified: `gst_pipeline.rs` (RTP payloader fix + test updates)
+- Modified: `backend/quality-guidelines.md` (cross-platform patterns)
+- Modified: `guides/cross-layer-thinking-guide.md` (type extension example)
+- All other changes from previous sessions (Phase 8 cross-platform, WebSocket auth fix, runtime test fixes)
+
+**Task Artifact Reboot Check**:
+|| Question | Answer |
+||----------|--------|
+|| Where am I? | Phase 1-8 all complete, finish-work pre-commit checks done |
+|| Where am I going? | Ready to commit and compound |
+|| What's the goal? | 跨平台桌面抓屏软件，所有功能阶段已完成 |
+|| What have I learned? | Cross-platform refactoring can silently break encoder pipeline string generation; must include RTP payloader in encoder output; `#[cfg(target_os)]` requires all platform branches covered |
+|| What have I done? | Fixed 2 Rust test failures from missing RTP payloader; updated spec docs; verified all 122 tests pass (75 Rust + 47 TS) |

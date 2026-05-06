@@ -176,5 +176,89 @@ $env:CARGO_TARGET_DIR = 'e:\screencast-build'  # 避免中文路径导致的编�
 - **安全边界测试模式**: 有效凭证→成功、无效凭证→拒绝、无凭证(跳过认证)→拒绝 — 第3项最易遗漏
 - **Solution文档**: `.feature/solutions/testing/screen-control-rtsp-testcase-design-2026-04-30.md`
 
+### Runtime Integration Fix (2026-05-06)
+
+**问题**: VLC 无法连接 RTSP 流，三层集成问题叠加
+
+**根因分析**:
+1. **运行时环境变量缺失**: `GST_PLUGIN_PATH` 和 `GST_PLUGIN_SCANNER` 仅在开发环境设置，用户直接运行应用时 GStreamer 找不到任何插件
+2. **gst-rtsp-server 线程模型错误**: RTSPServer 在一个 GLib MainContext 上 `attach()`，MainLoop 在另一个 context 上 `run()` — socket watches 不触发，RTSP 请求无法处理
+3. **Pipeline launch string 硬编码 CPU 编码器**: `build_launch_string()` 未调用 `build_encoder_element()` 的 GPU fallback逻辑
+4. **d3d11 vs d3d12**: `d3d11screencapturesrc` 在 RTSP media 线程中 D3D11 设备初始化失败
+
+**修复**:
+- `main.rs`: 启动前自动检测并设置 `GST_PLUGIN_PATH` + `GST_PLUGIN_SCANNER` (生产路径→开发路径→环境变量)
+- `server.rs`: 重构为独立线程 + `with_thread_default()` 确保同一 MainContext
+- `gst_pipeline.rs`: launch string 使用 GPU→CPU 自动选择
+- `PipelineVisual.vue`: 默认 RTSP URL 更新
+
+**关键学习**: gst-rtsp-server 的 RTSPServer + socket watches + MainLoop 必须在同一 MainContext 上 — 这是 gstreamer-rs 中最易犯的集成错误
+
+**Solution文档**: `.feature/solutions/build-issues/gstreamer-rtsp-runtime-environment-2026-05-06.md`
+
+### Remote Control Integration Test (2026-05-06)
+
+**测试覆盖**（合并到 `tests/test_runtime.py`，9 个反控模块 B1-B9）:
+
+| 模块 | 覆盖场景 |
+|------|---------|
+| B1 Connection | 基本连接、错误端口、多并发连接 |
+| B2 Authentication | 正确/错误密码、未认证发命令、重复认证、缺字段（空密码模式验证） |
+| B3 Mouse Commands | move+click(3按钮×2动作)+scroll(4方向)+drag(2按钮) |
+| B4 Keyboard Commands | 单键/Ctrl/Shift/Alt修饰键/特殊键/F1-F12/未知键/key_combo 6种 |
+| B5 Mouse Verify | OS API 读取实际鼠标位置，5坐标点验证 |
+| B6 Command Validation | 非法类型/缺字段/负坐标/大坐标/非法JSON/空串/枚举错误 |
+| B7 Concurrency | 3客户端并发/100条快速指令/鼠标+键盘交替 |
+| B8 Connection Lifecycle | 3次重连循环/空连接/空闲3秒后发命令 |
+| B9 Key Aliases | ctrl/Control/Esc/Escape/Enter/Return/Win/Super/Meta 别名 |
+
+**修复的 Bug**:
+
+1. **WebSocket 认证消息泄漏到命令解析** (`websocket.rs`): 空密码模式下 `authenticated=true`，auth 消息被当成 `RemoteCommand` 解析报 `unknown variant auth`。修复：auth 消息检测提前到认证判断之前。
+2. **空密码模式下错误密码通过认证** (`websocket.rs`): `authenticated = password.is_empty()` 导致任何 auth 消息走"已认证确认"分支。修复：增加 `auth_message_received` 标记，未显式认证过的连接仍需密码验证。
+3. **测试脚本 mouse_click 格式错误** (`test_runtime.py`): Rust 枚举序列化为 `"Left"/"Single"` (大写开头)，测试发了 `"left"/"press"`。
+4. **测试脚本连接重试缺失** (`test_runtime.py`): `ws_reconnect` 增加重试机制(3次,间隔1秒)，B8.3 空闲断连自动重连。
+
+### Cross-Platform Adaptation (2026-05-06)
+
+**macOS 适配**:
+- 画面源枚举：`core-graphics` crate → `CGGetOnlineDisplayList` + `CGWindowListCopyWindowInfo`
+- GStreamer 抓屏：`avfvideosrc display-index=N`（显示器）/ `avfvicesrc window-id=N`（窗口）
+- GPU 编码器：`vtenc_h264` / `vtenc_h265`（VideoToolbox）
+- GStreamer 路径：Homebrew (`/opt/homebrew/lib/gstreamer-1.0`) + 官方安装器 (`$GSTREAMER_1_0_ROOT`)
+
+**Linux 适配**:
+- 画面源枚举：`xrandr --query` 解析 connected 输出 → 备选 `/sys/class/drm` → 兜底 1920x1080
+- GStreamer 抓屏：`ximagesrc monitor-index=N`（X11）/ `pipewiresrc`（Wayland，未来）
+- GPU 编码器：`vaapih264enc` / `vaapih265enc`（VAAPI）
+- GStreamer 路径：标准路径 (`/usr/lib/x86_64-linux-gnu/gstreamer-1.0` 等)
+- 打包依赖：deb 依赖 `libgstreamer1.0-0`, `gstreamer1.0-plugins-*`, `gstreamer1.0-vaapi`
+
+**代码架构变更**:
+- `capture/platform/macos.rs`: CoreGraphics 显示器/窗口枚举
+- `capture/platform/linux.rs`: xrandr + DRM 显示器枚举
+- `pipeline/gst_pipeline.rs`: `#[cfg(target_os)]` 条件编译 → 平台特定 capture element + GPU encoder candidates
+- `encode/detector.rs`: `GpuCapability` 增加 `has_videotoolbox`/`has_vaapi`/`vt_encoders`/`vaapi_encoders`
+- `main.rs`: `find_gst_plugin_path()`/`find_gst_plugin_scanner()` 按平台搜索
+- `Cargo.toml`: `[target.'cfg(target_os = "macos")'.dependencies]` 添加 `core-graphics`/`core-foundation`
+- `tauri.conf.json`: 打包 targets 改为 `"all"`，增加 macOS/Linux 配置
+- 前端组件 `TopBar.vue`/`StatusBar.vue`/`EncodingConfig.vue`: 增加 VideoToolbox/VAAPI GPU 类型显示
+- `types/index.ts`: `GpuCapability` 接口增加跨平台字段
+
+### Finish-Work & Compound (2026-05-07)
+
+**发现并修复的 Bug**:
+- 跨平台重构 `gst_pipeline.rs` 时，`build_encoder_element()` 及其子函数 `build_cpu_encoder()` / `format_encoder_params()` 丢失了 RTP payloader（`rtph264pay` / `rtph265pay`）
+- 根因：旧代码内联 `x264enc ! rtph264pay`，重构为独立函数时只关注编码器参数，遗漏了 payloader 后缀
+- 影响：RTSP 流无法正常推送（gst-rtsp-server 需要 payloader 元素命名为 `pay0`）
+- 修复：在 `build_cpu_encoder` 和 `format_encoder_params` 中追加 `! rtph264pay` / `! rtph265pay`
+- Solution文档：`.feature/solutions/build-issues/cross-platform-refactor-rtp-payloader-loss-2026-05-07.md`
+
+**Spec 更新**:
+- `backend/quality-guidelines.md` — 增加跨平台 `#[cfg(target_os)]` 条件编译模式和 forbidden pattern
+- `guides/cross-layer-thinking-guide.md` — 增加跨平台类型扩展示例（GpuCapability）
+
+**关键学习**: 分解 GStreamer pipeline 字符串函数时，RTP payloader 是不可分割的组成部分；跨平台重构后必须重跑完整测试套件
+
 ---
 *Update this file after every 2 view/browser/search operations*

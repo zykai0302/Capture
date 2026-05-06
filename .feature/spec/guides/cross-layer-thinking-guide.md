@@ -123,6 +123,36 @@ Tauri automatically converts `snake_case` command parameter names to `camelCase`
 | `enum` (tuple variants) | `{ Variant: InnerType }` | E.g., `PipelineState::Error(String)` → `{ Error: string }` |
 | `struct` | `interface` | Field names stay snake_case |
 
+### Cross-Platform Type Extension Example
+
+When adding platform-specific fields, extend both Rust and TypeScript in sync:
+
+**Rust** (`encode/detector.rs`):
+```rust
+pub struct GpuCapability {
+    pub has_amf: bool,
+    pub has_nvenc: bool,
+    pub has_videotoolbox: bool,   // macOS
+    pub has_vaapi: bool,          // Linux
+    pub vt_encoders: Vec<String>, // macOS VideoToolbox
+    pub vaapi_encoders: Vec<String>, // Linux VAAPI
+    // ...
+}
+```
+
+**TypeScript** (`types/index.ts`):
+```typescript
+interface GpuCapability {
+  has_amf: boolean
+  has_nvenc: boolean
+  has_videotoolbox: boolean   // macOS
+  has_vaapi: boolean          // Linux
+  vt_encoders: string[]       // macOS VideoToolbox
+  vaapi_encoders: string[]    // Linux VAAPI
+  // ...
+}
+```
+
 ### Contract Verification Checklist
 
 When adding or modifying a Tauri Command:
