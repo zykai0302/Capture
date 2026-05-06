@@ -48,3 +48,39 @@ Generated 82 test cases (55+20 supplemented) for screen control PK product with 
 - Verify RTSP streaming with VLC
 - Test WebSocket remote control
 - Cross-platform adaptation (Phase 8: macOS + Linux)
+
+
+## Session 2: Cross-Platform Adaptation + WebSocket Auth Fix + RTP Payloader Fix
+
+**Date**: 2026-05-07
+**Task**: Cross-Platform Adaptation + WebSocket Auth Fix + RTP Payloader Fix
+
+### Summary
+
+Phase 8 cross-platform: macOS/Linux conditional compilation for capture/encode, WebSocket dual-flag auth fix, RTP payloader regression fix, wiki & spec updates, task archived
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1eacbc2` | (see git log) |
+| `d359dd8` | (see git log) |
+| `0024fc0` | (see git log) |
+| `3558020` | (see git log) |
+| `cb00dee` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
