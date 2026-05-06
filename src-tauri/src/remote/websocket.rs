@@ -107,30 +107,46 @@ async fn handle_client(
 ) {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
     let mut authenticated = password.is_empty(); // No password = auto-auth
+    let mut auth_message_received = false; // Track if client ever sent an auth message
 
     log::info!("WebSocket client connected from {}", addr);
 
     while let Some(msg_result) = ws_rx.next().await {
         match msg_result {
             Ok(Message::Text(text)) => {
-                if !authenticated {
-                    // Expect auth message: {"type":"auth","password":"xxx"}
-                    if let Ok(auth_msg) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if auth_msg.get("type").and_then(|v| v.as_str()) == Some("auth") {
+                // Always check for auth message first, regardless of authentication state.
+                // This prevents auth messages from leaking into RemoteCommand parsing.
+                if let Ok(auth_msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if auth_msg.get("type").and_then(|v| v.as_str()) == Some("auth") {
+                        if authenticated && auth_message_received {
+                            // Already authenticated (explicitly), just acknowledge
+                            let _ = ws_tx.send(Message::text(r#"{"status":"ok","type":"auth"}"#)).await;
+                        } else {
                             let provided_password = auth_msg
                                 .get("password")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
+                            // Authenticate only when provided password exactly matches.
+                            // In no-password mode (password is empty), only accept empty password.
                             if provided_password == password {
                                 authenticated = true;
+                                auth_message_received = true;
                                 let _ = ws_tx.send(Message::text(r#"{"status":"ok","type":"auth"}"#)).await;
                                 log::info!("WebSocket client authenticated: {}", addr);
-                                continue;
+                            } else {
+                                let _ = ws_tx
+                                    .send(Message::text(r#"{"status":"error","message":"Authentication failed"}"#))
+                                    .await;
+                                break;
                             }
                         }
+                        continue;
                     }
+                }
+
+                if !authenticated {
                     let _ = ws_tx
-                        .send(Message::text(r#"{"status":"error","message":"Authentication failed"}"#))
+                        .send(Message::text(r#"{"status":"error","message":"Authentication required"}"#))
                         .await;
                     break;
                 }
