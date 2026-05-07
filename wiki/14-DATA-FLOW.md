@@ -12,12 +12,14 @@
  │                        │────→ SourceList               │                            │
  │                        │      usePipeline.startStream()│                            │
  │                        │                              │                            │
- │                        │ invoke('start_stream', {      │                            │
- │                        │   sourceId: 'screen-0',       │                            │
- │                        │   sourceType: 'Monitor',      │                            │
- │                        │   sourceName: '显示器 0',      │                            │
- │                        │   width: 1920, height: 1080   │                            │
- │                        │ })                            │                            │
+│                        │ invoke('start_stream', {      │                            │
+│                        │   sourceId: 'screen-0',       │                            │
+│                        │   sourceType: 'Monitor',      │                            │
+│                        │   sourceName: '显示器 0',      │                            │
+│                        │   width: 1920, height: 1080,  │                            │
+│                        │   x: 0, y: 0,                 │                            │
+│                        │   handle: 65537               │                            │
+│                        │ })                            │                            │
  │                        │─────────────────────────────→│                            │
  │                        │                              │ start_stream()             │
  │                        │                              │───────────────────────────→│
@@ -183,4 +185,95 @@ EncodingConfig.applyConfig()
 | `useRemoteControl` | 5 秒 | `invoke('get_remote_status')` |
 
 加上 Tauri 事件驱动的即时更新：
-- `source-added` / `source-removed` 事件 → 立即触发 `useSources.refresh()`
+- `source-added` / `source-removed` 事件 → 立即触发 `useSources.refresh()` + `fetchThumbnails()`
+
+## 7 预览启动时序
+
+```
+用户选择源 + 推流中                前端                          Tauri IPC                    Rust 后端
+       │                            │                              │                            │
+       │  MainPreview watch(isRunning=true)                        │                            │
+       │                            │                              │                            │
+       │                            │ invoke('start_preview', {     │                            │
+       │                            │   sourceId: 'screen-0'        │                            │
+       │                            │ })                            │                            │
+       │                            │─────────────────────────────→│                            │
+       │                            │                              │ start_preview()            │
+       │                            │                              │───────────────────────────→│
+       │                            │                              │                            │
+       │                            │                              │                 从 pipelines 获取 source 信息
+       │                            │                              │                 (source_type, framerate, handle)
+       │                            │                              │                            │
+       │                            │                              │                 创建 PreviewPipeline ──→│
+       │                            │                              │                   ├ d3d11screencapturesrc
+       │                            │                              │                   │  monitor-handle={handle}
+       │                            │                              │                   ├ videoconvert
+       │                            │                              │                   ├ capsfilter(framerate=30)
+       │                            │                              │                   ├ jpegenc(quality=60)
+       │                            │                              │                   └ appsink → mpsc channel
+       │                            │                              │                            │
+       │                            │                              │                 创建 broadcast channel
+       │                            │                              │                 spawn_blocking: mpsc→broadcast 转发
+       │                            │                              │                            │
+       │                            │                              │                 ensure_mjpeg_server()
+       │                            │                              │                   ├ MjpegServer::new(8090)
+       │                            │                              │                   └ TcpListener::bind
+       │                            │                              │                            │
+       │                            │                              │                 mjpeg_server.add_source(
+       │                            │                              │                   "screen-0", btx)
+       │                            │                              │                            │
+       │                            │  Result<()>                  │                            │
+       │                            │←─────────────────────────────│←───────────────────────────│
+       │                            │                              │                            │
+       │                            │ previewUrl =                 │                            │
+       │                            │   "http://127.0.0.1:8090/    │                            │
+       │                            │    screen-0"                  │                            │
+       │                            │                              │                            │
+       │  <img :src="previewUrl">   │                              │                            │
+       │  浏览器请求 MJPEG 流        │                              │                            │
+       │────────────────────────────────────────────────────────→│                            │
+       │                            │                              │ MjpegServer 处理连接       │
+       │                            │                              │  ├ subscribe broadcast     │
+       │                            │                              │  └ 循环发送 JPEG 帧        │
+       │  MJPEG 实时画面显示         │                              │                            │
+       │←───────────────────────────│                              │                            │
+```
+
+## 8 Handle 传递链路
+
+`handle` (HMONITOR/HWND) 是确保显示器/窗口正确识别的关键数据，需贯穿完整链路：
+
+```
+Windows API                    Rust 后端                     Tauri IPC                  前端
+──────────                     ─────────                     ─────────                  ─────
+EnumDisplayMonitors            enumerate_monitors()
+  → HMONITOR                     CaptureSource {
+    handle: 65537                  handle: hmonitor.0 as u64
+                                  id: "screen-0"
+                                  x: rect.left, y: rect.top
+                                }
+                                    │
+                                    ├→ list_sources ─────────→ source.handle ────────→ CaptureSource.handle
+                                    │                                                      │
+                                    │                    ┌─────────────────────────────┘
+                                    │                    │
+                                    │           invoke('start_stream', { handle })
+                                    │                    │
+                                    ├→ start_stream ─────┤→ CaptureSource { handle }
+                                    │                    │   │
+                                    │                    │   └→ build_launch_string()
+                                    │                    │        d3d12screencapturesrc
+                                    │                    │          monitor-handle={handle}
+                                    │                    │
+                                    │           invoke('capture_thumbnail', { handle })
+                                    │                    │
+                                    └→ capture_thumbnail ┤→ capture_monitor_thumbnail(handle)
+                                                         │   │
+                                                         │   ├ handle != 0: HMONITOR(handle)
+                                                         │   │   → GetMonitorInfoW → BitBlt
+                                                         │   │
+                                                         │   └ handle == 0: find_monitor_by_index
+                                                         │       (回退方案，可能不准确)
+```
+
+> **⚠️ 关键教训**: 新增 `CaptureSource.handle` 字段后，必须审计所有构造/消费该结构体的 Tauri 命令和前端 invoke 调用，确保字段不被遗漏。详见 `.feature/solutions/integration-issues/cross-layer-field-omission-tauri-commands-2026-05-08.md`。

@@ -31,20 +31,31 @@ createApp(App).mount("#app");
 .app {
   display: grid;
   grid-template-rows: 52px 1fr 28px;
-  grid-template-columns: 320px 1fr 340px;
+  grid-template-columns: 320px 1fr 340px;  /* 动态: 通过 :style 绑定切换 */
   grid-template-areas:
     "topbar topbar topbar"
     "left   center right"
     "status status status";
   height: 100vh;
   overflow: hidden;
+  transition: grid-template-columns 0.3s ease;
 }
 
 @media (max-width: 1200px) {
   .app {
-    grid-template-columns: 260px 1fr 280px;
+    grid-template-columns: 260px 1fr 0px;  /* 默认折叠 */
+  }
+  .app.config-visible {
+    grid-template-columns: 260px 1fr 280px;  /* 展开时 */
   }
 }
+```
+
+**动态 Grid**: 通过 `:style` 绑定和 `config-visible` class 控制：
+
+```html
+<div class="app" :class="{ 'config-visible': showConfigPanel }"
+     :style="{ gridTemplateColumns: showConfigPanel ? '320px 1fr 340px' : '320px 1fr 0px' }">
 ```
 
 ### 2.2 状态管理
@@ -59,6 +70,13 @@ provide('pipeline', pipelineStore)
 provide('sources', sourcesStore)
 provide('config', configStore)
 provide('remote', remoteStore)
+
+// 设置面板折叠状态
+const showConfigPanel = ref(false)
+
+function onToggleSettings() {
+  showConfigPanel.value = !showConfigPanel.value
+}
 ```
 
 子组件通过 `inject` 获取：
@@ -121,6 +139,9 @@ await invokeWithTimeout('start_stream', {
   sourceName: source.name,
   width: source.width,
   height: source.height,
+  x: source.x,
+  y: source.y,
+  handle: source.handle,   // HMONITOR/HWND — 避免 monitor-index 映射问题
 })
 ```
 
@@ -133,13 +154,30 @@ await invokeWithTimeout('start_stream', {
 | `allSources` | `ref<CaptureSource[]>` | 合并列表 |
 | `loading` | `ref<boolean>` | 加载状态 |
 | `error` | `ref<string \| null>` | 错误信息 |
+| `thumbnailMap` | `ref<Record<string, string>>` | source_id → data URL 缩略图映射 |
 | `refresh()` | `async function` | 调用 `invoke('list_sources')` |
 
 **事件监听**: `onMounted` 时注册 Tauri 事件监听：
-- `source-added` → `refresh().then(updateAllSources)`
-- `source-removed` → `refresh().then(updateAllSources)`
+- `source-added` → `refresh().then(fetchThumbnails)`
+- `source-removed` → `refresh().then(fetchThumbnails)`
 
-**轮询**: 每 **5 秒**自动刷新。
+**轮询**: 每 **5 秒**自动刷新源列表 + 缩略图。
+
+**缩略图获取** (`fetchThumbnails`):
+```typescript
+const results = await Promise.allSettled(
+  sources.map(async (source) => {
+    const base64Str = await invoke<string>('capture_thumbnail', {
+      sourceId: source.id,
+      sourceType: source.source_type,
+      width: 320,
+      height: 180,
+      handle: source.handle,   // HMONITOR/HWND
+    })
+    return { id: source.id, url: `data:image/jpeg;base64,${base64Str}` }
+  })
+)
+```
 
 ### 3.3 `useConfig`
 
@@ -212,9 +250,15 @@ App.vue
 |------|------|
 | 左 | Logo SVG + "SCREENCAST PRO" + "v0.1.0" 徽章 |
 | 中 | GPU 类型指示灯(绿) + RTSP 端口指示灯(青) + 推流路数指示灯(橙) |
-| 右 | 设置按钮(齿轮图标 + "设置") |
+| 右 | 设置按钮(齿轮图标 + "设置") — 点击切换 ConfigPanel 折叠 |
+
+**Props**: `settingsVisible: boolean`
+
+**Emits**: `toggleSettings`
 
 **GPU 标签逻辑**: `has_amf → "AMD GPU (AMF)"` / `has_mf → "GPU (MF)"` / 否则 → `"CPU Only"`
+
+**设置按钮激活态**: `settingsVisible` 为 true 时显示青色高亮
 
 ### 5.2 SourceList
 
@@ -229,12 +273,17 @@ App.vue
 
 | 区域 | 内容 |
 |------|------|
-| 顶部 | SVG 缩略图(80x45) + 源名称 + 类型徽章 + 分辨率 |
+| 顶部 | 真实缩略图(320x180 JPEG) + 源名称 + 类型徽章 + 分辨率 |
 | LIVE | 推流中时左上角显示红色 "LIVE" 闪烁徽章 |
 | 底部 | 状态指示器(绿/灰/红) + 状态文字 + 编码器标签(GPU绿/CPU橙) |
 | 按钮 | 未推流→播放按钮 / 推流中→停止按钮 |
 | 编码条 | 推流中显示 GPU(青绿渐变) / CPU(橙红渐变) 进度条 |
 | RTSP | 推流中显示可复制的 RTSP URL |
+
+**缩略图逻辑**:
+- 有缩略图: `<img :src="thumbnailUrl">` (从 `useSources.thumbnailMap` 获取)
+- 无缩略图/加载失败: 显示 SVG 占位图 (显示器/窗口图标)
+- 自动刷新: 随 `useSources` 5 秒轮询刷新
 
 **类型徽章**: Monitor → 青色显示器图标 + "显示器" / Window → 紫色窗口图标 + "窗口"
 
@@ -250,8 +299,15 @@ App.vue
 |------|------|
 | 标题栏 | 源名称 + RTSP URL(可点击复制) + 停止按钮(推流中) |
 | Pipeline | PipelineVisual 组件 |
-| 预览 | 推流中→SVG 模拟桌面画面 / 未推流→占位符(图标+提示文字) |
+| 预览 | 推流中→MJPEG 实时画面 (`<img src="http://127.0.0.1:{port}/{source_id}">`) / 加载中→"加载预览..." / 未推流→占位符(图标+提示文字) |
 | HUD | 推流中叠加: 左上→"{W}x{H} {encoder}" + "延迟: {N}ms" / 右上→"{N} FPS"(绿) |
+
+**MJPEG 预览逻辑**:
+1. `watch(isRunning)`: 推流启动时 → `invoke('start_preview', { sourceId })` → 设置 `previewUrl`
+2. 推流停止时 → `invoke('stop_preview', { sourceId })` → 清空 `previewUrl`
+3. `<img :src="previewUrl">` 浏览器原生支持 MJPEG 流
+
+**预览端口**: 从 `useConfig().config.value?.preview_http_port` 获取 (默认 8090)
 
 ### 5.5 PipelineVisual
 
@@ -269,6 +325,8 @@ App.vue
 ### 5.6 ConfigPanel
 
 3 个 Tab: "编码配置" / "反控设置" / "网络"
+
+**折叠/展开**: 接收 `visible: boolean` prop，通过 `v-show="visible"` 控制显隐。折叠时 Grid 右侧列宽为 0px。
 
 ### 5.7 EncodingConfig
 

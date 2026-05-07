@@ -20,6 +20,7 @@
 | 日志文件 | `%TEMP%\screencast-pro.log` |
 | 默认 RTSP 端口 | `8554` |
 | 默认 WebSocket 端口 | `9001` |
+| 默认 MJPEG 预览端口 | `8090` |
 
 ## 2 目录结构
 
@@ -95,6 +96,7 @@
 │       │   ├── mod.rs
 │       │   ├── source.rs
 │       │   ├── hotplug.rs
+│       │   ├── thumbnail.rs     → capture_thumbnail(), BitBlt/PrintWindow + JPEG
 │       │   └── platform/
 │       │       ├── mod.rs
 │       │       ├── windows.rs
@@ -107,7 +109,9 @@
 │       ├── pipeline/
 │       │   ├── mod.rs
 │       │   ├── gst_pipeline.rs
-│       │   └── manager.rs
+│       │   ├── manager.rs
+│       │   ├── preview.rs        → PreviewPipeline (capture → jpegenc → appsink)
+│       │   └── mjpeg_server.rs   → MjpegServer (tokio HTTP MJPEG)
 │       ├── rtsp/
 │       │   ├── mod.rs
 │       │   └── server.rs      → RtspServer (独立 MainContext + channel)
@@ -306,6 +310,8 @@ env_logger = "0.11"
 anyhow = "1"
 thiserror = "2"
 futures-util = "0.3"
+image = "0.25"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

@@ -20,8 +20,11 @@ pub struct CaptureSource {
     pub source_type: SourceType,
     pub width: u32,
     pub height: u32,
+    pub x: i32,               // 显示器/窗口 X 坐标
+    pub y: i32,               // 显示器/窗口 Y 坐标
     pub is_streaming: bool,
     pub rtsp_url: Option<String>,
+    pub handle: u64,          // Windows: HMONITOR (显示器) / HWND (窗口)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +156,7 @@ pub struct AppConfig {
     pub ws_password: String,      // default: ""
     pub auto_reconnect: bool,     // default: true
     pub default_encode: EncodeConfig,
+    pub preview_http_port: u16,   // default: 8090 — MJPEG 预览 HTTP 端口
 }
 ```
 
@@ -229,6 +233,8 @@ pub enum AppError {
     Rtsp(String),
     #[error("Remote control error: {0}")]
     Remote(String),
+    #[error("Preview error: {0}")]
+    Preview(String),
     #[error("Config error: {0}")]
     Config(String),
     #[error("IO error: {0}")]
@@ -299,8 +305,11 @@ export interface CaptureSource {
   source_type: SourceType
   width: number
   height: number
+  x: number
+  y: number
   is_streaming: boolean
   rtsp_url: string | null
+  handle: number              // Windows: HMONITOR (显示器) / HWND (窗口)
 }
 
 export interface CaptureSourceList {
@@ -356,6 +365,7 @@ export interface AppConfig {
   ws_password: string
   auto_reconnect: boolean
   default_encode: EncodeConfig
+  preview_http_port: number     // MJPEG 预览 HTTP 端口 (默认 8090)
 }
 
 export interface RemoteStatus {

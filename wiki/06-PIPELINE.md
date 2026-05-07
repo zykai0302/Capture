@@ -6,7 +6,9 @@
 pipeline/
 ├── mod.rs          → PipelineState, PipelineStatus, PipelineManager trait
 ├── gst_pipeline.rs → build_launch_string(), gpu_encoder_candidates(), detect_available_encoders()
-└── manager.rs      → GstPipelineManager, PipelineHandle, detect_encoder_info()
+├── manager.rs      → GstPipelineManager, PipelineHandle, detect_encoder_info()
+├── preview.rs      → PreviewPipeline — 独立预览管线 (capture → jpegenc → appsink)
+└── mjpeg_server.rs → MjpegServer — tokio HTTP MJPEG 服务器
 ```
 
 ## 2 Pipeline 状态机
@@ -33,7 +35,12 @@ pipeline/
 
 平台特定的采集元素通过 `#[cfg(target_os)]` 条件编译选择：
 
-**Windows — Monitor**:
+**Windows — Monitor** (优先使用 monitor-handle):
+```
+d3d12screencapturesrc monitor-handle={hmonitor} ! videoconvert
+```
+
+**Windows — Monitor** (handle=0 时回退到 monitor-index):
 ```
 d3d12screencapturesrc monitor-index={monitor_idx} ! videoconvert
 ```
@@ -117,11 +124,16 @@ struct PipelineHandle {
     source: CaptureSource,
     encoder_used: String,        // "amfh264enc"
     is_gpu: bool,
+    preview_pipeline: Option<PreviewPipeline>,  // 独立预览管线
+    frame_count: Arc<AtomicU64>, // 帧计数器
+    started_at: Instant,         // 启动时间
 }
 
 pub struct GstPipelineManager {
     pipelines: Mutex<HashMap<String, PipelineHandle>>,
     rtsp_server: Mutex<Option<RtspServer>>,
+    mjpeg_server: Arc<tokio::sync::Mutex<Option<MjpegServer>>>,  // MJPEG HTTP 服务器
+    preview_http_port: u16,       // 默认 8090
     config: AppConfig,
 }
 ```
@@ -214,6 +226,184 @@ if guard.is_none():
 
 ```
 rtsp_server.lock().as_ref().map(|s| s.rtsp_url(rtsp_path))
+```
+
+---
+
+## 6 预览管线 (`preview.rs`)
+
+### 6.1 设计理念
+
+独立预览管线与 RTSP 推流管线并行运行，**零风险不影响推流稳定性**。不修改现有 RTSP pipeline（无法在 RTSPMediaFactory launch string 中添加 appsink 分支）。
+
+### 6.2 PreviewPipeline 结构
+
+```rust
+pub struct PreviewPipeline {
+    pipeline: gstreamer::Pipeline,
+    frame_tx: Arc<mpsc::SyncSender<Vec<u8>>>,
+    pub frame_rx: mpsc::Receiver<Vec<u8>>>,
+}
+```
+
+### 6.3 Pipeline 元素链
+
+```
+d3d11screencapturesrc monitor-handle={hmonitor} → videoconvert → capsfilter(framerate) → jpegenc(quality=60) → appsink(max-buffers=1, drop=true)
+```
+
+| 元素 | 属性 | 说明 |
+|------|------|------|
+| `d3d11screencapturesrc` / `d3d12screencapturesrc` | `monitor-handle` / `window-handle` | 使用 handle 定位（与 RTSP 管线一致） |
+| `videoconvert` | — | 格式转换 |
+| `capsfilter` | `framerate=N/1` | 控制预览帧率 |
+| `jpegenc` | `quality=60` | JPEG 编码 |
+| `appsink` | `emit-signals=true, max-buffers=1, drop=true` | 获取 JPEG 帧 |
+
+### 6.4 采集元素选择逻辑
+
+```
+Windows Monitor:
+  1. 优先: d3d11screencapturesrc monitor-handle={handle}  (WGC, 更低延迟)
+  2. 备选: d3d12screencapturesrc monitor-handle={handle}  (DXGI)
+  3. 回退: d3d11screencapturesrc monitor-handle={handle}
+
+Windows Window:
+  1. 优先: d3d11screencapturesrc capture-api=wgc window-handle={handle}
+  2. 备选: d3d12screencapturesrc capture-api=wgc window-handle={handle}
+  3. 回退: d3d11screencapturesrc capture-api=wgc window-handle={handle}
+```
+
+> 预览管线使用 `d3d11screencapturesrc`（非 RTSP 管线的 `d3d12screencapturesrc`），因为预览不在 RTSP 媒体线程中运行，不受 D3D11 线程限制。
+
+### 6.5 appsink 回调
+
+```rust
+appsink.connect_new_sample(move |appsink| {
+    let sample = appsink.pull_sample()?;
+    let buffer = sample.buffer().ok_or(gstreamer::FlowError::Error)?;
+    let map = buffer.map_readable().map_err(|_| gstreamer::FlowError::Error)?;
+    let data = map.as_slice().to_vec();
+    let _ = tx_arc.send(data);  // 发送到 mpsc channel
+    Ok(gstreamer::FlowSuccess::Ok)
+});
+```
+
+### 6.6 方法
+
+| 方法 | 说明 |
+|------|------|
+| `new(source_id, source_type, framerate, frame_count, x, y, w, h, handle)` | 创建预览管线 |
+| `play()` | 设置 Pipeline 状态为 Playing |
+| `stop()` | 设置 Pipeline 状态为 Null |
+
+---
+
+## 7 MJPEG HTTP 服务器 (`mjpeg_server.rs`)
+
+### 7.1 设计理念
+
+使用 `tokio::net::TcpListener` 构建轻量 HTTP MJPEG 服务器，复用项目已有的 tokio 异步运行时，**零外部依赖**（无需 tiny_http）。
+
+### 7.2 MjpegServer 结构
+
+```rust
+pub struct MjpegServer {
+    pub port: u16,
+    pub running: Arc<AtomicBool>,
+    sources: Arc<Mutex<HashMap<String, broadcast::Sender<Vec<u8>>>>>,
+}
+```
+
+### 7.3 工作流程
+
+```
+1. TcpListener::bind("127.0.0.1:{port}")
+2. tokio::spawn → 循环 accept 连接
+3. 每个连接 → tokio::spawn handle_mjpeg_connection()
+   ├→ 解析 HTTP GET 请求路径 → 提取 source_id
+   ├→ 查找 broadcast::Sender → subscribe 获取 Receiver
+   ├→ 发送 MJPEG 头: Content-Type: multipart/x-mixed-replace; boundary=frame
+   └→ 循环: recv JPEG 帧 → 写入 --frame\r\n Content-Length\r\n JPEG bytes
+```
+
+### 7.4 Broadcast Channel 架构
+
+```
+PreviewPipeline (appsink callback)
+    │ mpsc::SyncSender
+    ▼
+spawn_blocking (mpsc→broadcast 转发)
+    │ broadcast::Sender
+    ▼
+MjpegServer.sources HashMap
+    │ broadcast::Sender.clone()
+    ├→ Client 1: broadcast::Receiver → HTTP MJPEG stream
+    ├→ Client 2: broadcast::Receiver → HTTP MJPEG stream
+    └→ Client N: ...
+```
+
+> **broadcast channel** 支持 N 个客户端同时订阅同一源，解决 `mpsc::Receiver` 不可克隆的限制。
+
+### 7.5 方法
+
+| 方法 | 说明 |
+|------|------|
+| `new(port)` | 创建服务器 |
+| `add_source(source_id, broadcast::Sender)` | 注册帧源 |
+| `remove_source(source_id)` | 移除帧源 |
+| `start()` | 绑定端口并开始监听 |
+
+### 7.6 MJPEG 帧格式
+
+```
+HTTP/1.1 200 OK
+Content-Type: multipart/x-mixed-replace; boundary=frame
+
+--frame
+Content-Type: image/jpeg
+Content-Length: {len}
+
+{jpeg bytes}
+\r\n
+--frame
+Content-Type: image/jpeg
+Content-Length: {len}
+
+{jpeg bytes}
+\r\n
+...
+```
+
+---
+
+## 8 管线管理方法 (新增预览相关)
+
+### 8.1 `start_preview(&self, source_id: &str) -> AppResult<()>`
+
+```
+1. 从 pipelines 获取 source 信息 (source_type, framerate, handle 等)
+2. 创建 PreviewPipeline
+3. 创建 broadcast channel (mpsc→broadcast 转发在 spawn_blocking 中)
+4. 确保 MJPEG 服务器已启动 (ensure_mjpeg_server)
+5. 注册 broadcast::Sender 到 MjpegServer
+6. 存储 PreviewPipeline 到 PipelineHandle
+```
+
+### 8.2 `stop_preview(&self, source_id: &str)`
+
+```
+1. 从 PipelineHandle 取出 PreviewPipeline → stop()
+2. 从 MjpegServer 移除 source
+```
+
+### 8.3 `ensure_mjpeg_server(&self) -> AppResult<()>`
+
+```
+若 mjpeg_server 为 None:
+    创建 MjpegServer::new(preview_http_port)
+    server.start().await
+    存储到 mjpeg_server
 ```
 
 ---

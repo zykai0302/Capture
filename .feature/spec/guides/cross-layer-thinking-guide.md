@@ -162,3 +162,24 @@ When adding or modifying a Tauri Command:
 - [ ] New enum variants are handled in TypeScript
 - [ ] `snake_case` → `camelCase` parameter mapping is correct
 - [ ] Event payload types match between Rust `emit()` and TS `listen()`
+
+### New Field Addition Audit
+
+When adding a new field to a struct that crosses the Tauri bridge (e.g., `CaptureSource`, `PipelineStatus`):
+
+1. **Search all struct literals** in Rust — ensure the new field is set (grep `StructName {`)
+2. **Search all `invoke('command', { ... })` calls** in TypeScript — ensure the new field is passed
+3. **Search all Tauri command function signatures** — ensure the new field is a parameter (if the command reconstructs the struct)
+4. **Search all test mocks** — ensure test data includes the new field
+5. **Prefer source_id lookup over parameter reconstruction** — cache the full struct on the backend and look it up by ID, eliminating the need to pass every field through each command
+
+**Why**: The `start_stream` and `capture_thumbnail` commands both reconstructed `CaptureSource` from individual parameters. When `handle` was added to the struct, both commands defaulted it to `0`, causing silent display mismatch bugs on multi-monitor systems. See `.feature/solutions/integration-issues/cross-layer-field-omission-tauri-commands-2026-05-08.md`.
+
+### Display Identification on Windows
+
+When identifying display monitors:
+
+- **Always use HMONITOR** (OS-level handle) for programmatic identification
+- **Never rely on enumeration order** as a stable identifier — `EnumDisplayMonitors` order may differ from `\\.\DISPLAY` numbering
+- Use `monitor-handle` property in GStreamer elements instead of `monitor-index`
+- Use index-based fallback **only** when handle is unavailable (`handle == 0`)

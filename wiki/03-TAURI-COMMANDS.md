@@ -58,6 +58,9 @@ async fn start_stream(
     source_name: String,
     width: u32,
     height: u32,
+    x: i32,
+    y: i32,
+    handle: u64,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), AppError>
 ```
@@ -69,13 +72,18 @@ async fn start_stream(
 | 参数 | `sourceName` | `string` | 源名称 |
 | 参数 | `width` | `number` | 宽度 |
 | 参数 | `height` | `number` | 高度 |
+| 参数 | `x` | `number` | 显示器/窗口 X 坐标 |
+| 参数 | `y` | `number` | 显示器/窗口 Y 坐标 |
+| 参数 | `handle` | `number` | HMONITOR (显示器) / HWND (窗口) |
 | 返回值 | — | `null` | |
 
 **行为**:
 1. 解析 `source_type`: "Monitor" → `SourceType::Monitor`, "Window" → `SourceType::Window`, 其他 → Error
-2. 构建 `CaptureSource` 结构体 (is_streaming=false, rtsp_url=None)
+2. 构建 `CaptureSource` 结构体 (is_streaming=false, rtsp_url=None, handle=传入值)
 3. 获取 `state.config.lock().unwrap().default_encode.clone()`
 4. `spawn_blocking(|| pipeline_manager.start_pipeline(&source, &config))`
+
+> **重要**: `handle` 参数用于 GStreamer 管线的 `monitor-handle`/`window-handle` 属性，避免 `monitor-index` 映射不一致导致显示器反转。
 
 ---
 
@@ -226,6 +234,93 @@ fn get_remote_status(state: tauri::State<AppState>) -> Result<RemoteStatus, AppE
 
 ---
 
+### 1.14 `capture_thumbnail`
+
+```rust
+#[tauri::command]
+async fn capture_thumbnail(
+    source_id: String,
+    source_type: String,
+    width: u32,
+    height: u32,
+    handle: u64,
+) -> Result<String, AppError>
+```
+
+| 方向 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+| 参数 | `sourceId` | `string` | 源 ID |
+| 参数 | `sourceType` | `string` | "Monitor" / "Window" |
+| 参数 | `width` | `number` | 缩略图宽度 (默认 320) |
+| 参数 | `height` | `number` | 缩略图高度 (默认 180) |
+| 参数 | `handle` | `number` | HMONITOR / HWND，优先用于定位显示器 |
+| 返回值 | — | `string` | Base64 编码的 JPEG 数据 |
+
+**行为**:
+1. `spawn_blocking` 调用 `capture::thumbnail::capture_thumbnail()`
+2. Windows Monitor: 优先使用 HMONITOR 定位显示器 → `GetMonitorInfoW` → `BitBlt` 截图
+3. Windows Window: 使用 HWND → `PrintWindow` 截图
+4. 缩放到指定尺寸，JPEG 编码 (quality=60)
+5. Base64 编码返回
+
+> **handle 优先**: 当 `handle != 0` 时直接使用 HMONITOR 定位显示器，避免 `find_monitor_by_index` 的枚举顺序与 `\\.\DISPLAY` 编号不一致问题。
+
+---
+
+### 1.15 `start_preview`
+
+```rust
+#[tauri::command]
+async fn start_preview(source_id: String, state: tauri::State<'_, AppState>) -> Result<(), AppError>
+```
+
+| 方向 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+| 参数 | `sourceId` | `string` | 源 ID |
+| 返回值 | — | `null` | |
+
+**行为**:
+1. 从 `pipelines` 获取 source 信息 (source_type, framerate, handle 等)
+2. 创建独立预览 Pipeline: `d3d11screencapturesrc → videoconvert → jpegenc → appsink`
+3. 启动 MJPEG HTTP 服务器 (端口: config.preview_http_port, 默认 8090)
+4. 注册 frame source 到 MJPEG 服务器
+
+> 预览 Pipeline 与 RTSP Pipeline 并行运行，独立启停，零风险不影响推流。
+
+---
+
+### 1.16 `get_preview_url`
+
+```rust
+#[tauri::command]
+async fn get_preview_url(source_id: String, state: tauri::State<'_, AppState>) -> Result<Option<String>, AppError>
+```
+
+| 方向 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+| 参数 | `sourceId` | `string` | 源 ID |
+| 返回值 | — | `string \| null` | MJPEG 预览 URL |
+
+**行为**: 若源正在推流，返回 `http://127.0.0.1:{preview_http_port}/{source_id}`，否则返回 `null`。
+
+---
+
+### 1.17 `stop_preview`
+
+```rust
+#[tauri::command]
+async fn stop_preview(source_id: String, state: tauri::State<'_, AppState>) -> Result<(), AppError>
+```
+
+| 方向 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+| 参数 | `sourceId` | `string` | 源 ID |
+| 返回值 | — | `null` | |
+
+**行为**: 停止预览 Pipeline 并从 MJPEG 服务器移除 frame source。
+
+---
+
 ## 2 命令注册表
 
 ```rust
@@ -243,6 +338,10 @@ tauri::generate_handler![
     start_remote_control,
     stop_remote_control,
     get_remote_status,
+    capture_thumbnail,
+    start_preview,
+    get_preview_url,
+    stop_preview,
 ]
 ```
 
@@ -273,4 +372,4 @@ Tauri IPC 使用 **camelCase** 参数名（前端）映射到 **snake_case**（R
 | `source_type` | `sourceType` |
 | `source_name` | `sourceName` |
 
-其他参数 (`width`, `height`, `port`, `password`, `config`) 名称一致，无需映射。
+其他参数 (`width`, `height`, `x`, `y`, `handle`, `port`, `password`, `config`) 名称一致，无需映射。

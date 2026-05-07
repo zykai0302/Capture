@@ -4,9 +4,10 @@
 
 ```
 capture/
-├── mod.rs          → pub mod source; pub mod platform; pub mod hotplug;
+├── mod.rs          → pub mod source; pub mod platform; pub mod hotplug; pub mod thumbnail;
 ├── source.rs       → CaptureSource, CaptureSourceList, SourceType
 ├── hotplug.rs      → start_hotplug_monitor(), enumerate_sources_with_timeout()
+├── thumbnail.rs    → capture_thumbnail(), capture_monitor_thumbnail(), capture_window_thumbnail()
 └── platform/
     ├── mod.rs      → cfg gate 分发到 windows / macos / linux
     ├── windows.rs  → enumerate_sources(), enumerate_monitors(), enumerate_windows()
@@ -207,15 +208,82 @@ core-foundation = "0.10"
 
 ---
 
-## 6 热插拔监控 (`hotplug.rs`)
+## 6 缩略图截图 (`thumbnail.rs`)
 
-### 6.1 常量
+### 6.1 入口函数
+
+```rust
+pub fn capture_thumbnail(
+    source_id: &str,
+    source_type: &str,
+    width: u32,
+    height: u32,
+    handle: u64,
+) -> AppResult<Vec<u8>>
+```
+
+返回 JPEG 编码的缩略图数据（约 320x180，quality=60）。
+
+### 6.2 显示器截图 (`capture_monitor_thumbnail`)
+
+**API**: `GetDC(None)` + `CreateDIBSection` + `BitBlt`
+
+**显示器定位策略**:
+1. 若 `handle != 0` → 直接使用 `HMONITOR(handle)` 定位（**推荐**，与 GStreamer 管线一致）
+2. 若 `handle == 0` → 回退到 `find_monitor_by_index(monitor_index)` 枚举定位
+
+**处理逻辑**:
+1. `GetMonitorInfoW(hmonitor)` → 获取 `rcMonitor` 矩形
+2. `GetDC(None)` → 整个虚拟屏幕的 DC（跨显示器）
+3. `CreateDIBSection` + `BitBlt(hdc_compat, 0, 0, w, h, hdc_screen, rect.left, rect.top, SRCCOPY)`
+4. BGRA → RGBA 像素转换
+5. `image::imageops::resize` 缩放到目标尺寸
+6. `encode_jpeg` JPEG 编码
+
+> **关键**: BitBlt 源坐标使用 `rect.left, rect.top`（显示器在虚拟屏幕中的偏移），而非 `(0, 0)`。`GetDC(None)` 返回的是整个虚拟屏幕的 DC。
+
+### 6.3 窗口截图 (`capture_window_thumbnail`)
+
+**API**: `GetWindowDC(hwnd)` + `PrintWindow`
+
+**处理逻辑**:
+1. 从 `source_id` 解析 HWND: `"window-12345678"` → `HWND(12345678)`
+2. `GetWindowRect` → 窗口尺寸
+3. `GetWindowDC(hwnd)` + `CreateCompatibleDC` + `CreateDIBSection`
+4. `PrintWindow(hwnd, hdc_compat, PRINT_WINDOW_FLAGS(2))` — `PW_RENDERFULLCONTENT`
+5. BGRA → RGBA + 缩放 + JPEG 编码
+
+> **PRINT_WINDOW_FLAGS(2)** = `PW_RENDERFULLCONTENT`，捕获包括 DirectX 内容在内的完整窗口画面。
+
+### 6.4 `find_monitor_by_index` (回退方案)
+
+**API**: `EnumDisplayMonitors` 按枚举顺序计数匹配
+
+```rust
+unsafe fn find_monitor_by_index(target_index: u32) -> AppResult<HMONITOR>
+```
+
+**⚠️ 已知问题**: 枚举顺序可能与 `\\.\DISPLAY` 编号不一致，导致双显示器场景抓错画面。优先使用 HMONITOR。
+
+### 6.5 JPEG 编码
+
+```rust
+fn encode_jpeg(img: &RgbaImage) -> AppResult<Vec<u8>>
+```
+
+使用 `image` crate 的 `JpegEncoder::new_with_quality(&mut buf, 60)`。JPEG 不支持 alpha，先转 RGB8。
+
+---
+
+## 7 热插拔监控 (`hotplug.rs`)
+
+### 7.1 常量
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
 | `ENUM_TIMEOUT_SECS` | `10` | 枚举超时（防止 Win32 API 阻塞） |
 
-### 6.2 `start_hotplug_monitor(app: AppHandle, pipeline_manager: Arc<GstPipelineManager>)`
+### 7.2 `start_hotplug_monitor(app: AppHandle, pipeline_manager: Arc<GstPipelineManager>)`
 
 在独立线程中运行，生命周期与进程一致：
 
@@ -242,7 +310,7 @@ core-foundation = "0.10"
    }
 ```
 
-### 6.3 `enumerate_sources_with_timeout() -> Result<CaptureSourceList, String>`
+### 7.3 `enumerate_sources_with_timeout() -> Result<CaptureSourceList, String>`
 
 超时保护机制：
 

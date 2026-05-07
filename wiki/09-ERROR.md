@@ -17,6 +17,8 @@ pub enum AppError {
     Rtsp(String),
     #[error("Remote control error: {0}")]
     Remote(String),
+    #[error("Preview error: {0}")]
+    Preview(String),
     #[error("Config error: {0}")]
     Config(String),
     #[error("IO error: {0}")]
@@ -117,5 +119,6 @@ RemoteControlServer::stop()
 | `Encode("encoder not available")` | `"Encode error: encoder not available"` |
 | `Rtsp("port in use")` | `"RTSP error: port in use"` |
 | `Remote("auth failed")` | `"Remote control error: auth failed"` |
+| `Preview("pipeline failed")` | `"Preview error: pipeline failed"` |
 | `Config("invalid port")` | `"Config error: invalid port"` |
 | `Io(io::Error)` | `"IO error: {io_error_message}""` |
