@@ -84,3 +84,36 @@ Phase 8 cross-platform: macOS/Linux conditional compilation for capture/encode, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 画面源实时预览、MJPEG推流、设置面板折叠与Bug修复
+
+**Date**: 2026-05-08
+**Task**: 画面源实时预览、MJPEG推流、设置面板折叠与Bug修复
+
+### Summary
+
+实现BitBlt/PrintWindow缩略图捕获、MJPEG预览流HTTP服务器、设置面板折叠；修复HMONITOR handle传递(#2)和媒体查询覆盖Grid(#4)；新增跨层字段审计方案；更新8个wiki文档
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e9f30e9` | (see git log) |
+| `3225e8d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
