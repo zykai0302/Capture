@@ -13,13 +13,13 @@ use std::sync::mpsc;
 /// `MainLoop::new()` and `server.attach()` to guarantee they use our context.
 pub struct RtspServer {
     port: u16,
-    add_stream_tx: mpsc::Sender<(String, String)>,
+    add_stream_tx: mpsc::Sender<(String, String, mpsc::Sender<AppResult<()>>)>,
     remove_stream_tx: mpsc::Sender<String>,
 }
 
 impl RtspServer {
     pub fn new(port: u16) -> AppResult<Self> {
-        let (add_stream_tx, add_stream_rx) = mpsc::channel::<(String, String)>();
+        let (add_stream_tx, add_stream_rx) = mpsc::channel::<(String, String, mpsc::Sender<AppResult<()>>)>();
         let (remove_stream_tx, remove_stream_rx) = mpsc::channel::<String>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<u16, String>>();
 
@@ -64,12 +64,15 @@ impl RtspServer {
                         None,
                         Priority::DEFAULT,
                         move || {
-                            while let Ok((path, launch_str)) = add_stream_rx.try_recv() {
+                            while let Ok((path, launch_str, reply_tx)) = add_stream_rx.try_recv() {
+                                log::info!("RTSP: Adding stream path={}, launch={}", path, launch_str);
                                 let factory = gstreamer_rtsp_server::RTSPMediaFactory::new();
                                 factory.set_launch(&launch_str);
                                 factory.set_shared(true);
                                 factory.set_latency(0);
                                 mp.add_factory(&path, factory);
+                                log::info!("RTSP: Factory added for path={}", path);
+                                let _ = reply_tx.send(Ok(()));
                             }
 
                             while let Ok(path) = remove_stream_rx.try_recv() {
@@ -106,11 +109,14 @@ impl RtspServer {
     }
 
     pub fn add_stream(&self, path: &str, pipeline_launch_str: &str) -> AppResult<()> {
+        let (reply_tx, reply_rx) = mpsc::channel::<AppResult<()>>();
         self.add_stream_tx
-            .send((path.to_string(), pipeline_launch_str.to_string()))
+            .send((path.to_string(), pipeline_launch_str.to_string(), reply_tx))
             .map_err(|e| AppError::Rtsp(format!("Failed to send add_stream request: {}", e)))?;
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        Ok(())
+        // Wait for the RTSP server thread to confirm the factory was added
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| AppError::Rtsp(format!("Timeout waiting for add_stream confirmation: {}", e)))?
     }
 
     pub fn remove_stream(&self, path: &str) {

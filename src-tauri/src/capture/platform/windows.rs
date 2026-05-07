@@ -61,8 +61,11 @@ unsafe extern "system" fn monitor_enum_callback(
             source_type: SourceType::Monitor,
             width,
             height,
+            x: rect.left,
+            y: rect.top,
             is_streaming: false,
             rtsp_url: None,
+            handle: hmonitor.0 as u64,
         };
         list.push(source);
     }
@@ -126,8 +129,11 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
             source_type: SourceType::Window,
             width,
             height,
+            x: rect.left,
+            y: rect.top,
             is_streaming: false,
             rtsp_url: None,
+            handle: hwnd.0 as u64,
         };
         list.push(source);
     }

@@ -19,7 +19,7 @@ export function usePipeline() {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  async function startStream(source: { id: string; source_type: string; name: string; width: number; height: number }) {
+  async function startStream(source: { id: string; source_type: string; name: string; width: number; height: number; x: number; y: number; handle: number }) {
     try {
       await invokeWithTimeout('start_stream', {
         sourceId: source.id,
@@ -27,6 +27,9 @@ export function usePipeline() {
         sourceName: source.name,
         width: source.width,
         height: source.height,
+        x: source.x,
+        y: source.y,
+        handle: source.handle,
       })
       await refreshStatus()
     } catch (e: any) {

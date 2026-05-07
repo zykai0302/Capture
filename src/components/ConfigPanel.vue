@@ -6,6 +6,7 @@ import NetworkConfig from './NetworkConfig.vue'
 
 defineProps<{
   selectedSourceId: string | null
+  visible: boolean
 }>()
 
 type ConfigTab = 'encoding' | 'remote' | 'network'
@@ -13,7 +14,7 @@ const activeTab = ref<ConfigTab>('encoding')
 </script>
 
 <template>
-  <aside class="panel-right">
+  <aside v-show="visible" class="panel-right">
     <div class="config-tabs">
       <button class="config-tab" :class="{ active: activeTab === 'encoding' }" @click="activeTab = 'encoding'">编码配置</button>
       <button class="config-tab" :class="{ active: activeTab === 'remote' }" @click="activeTab = 'remote'">反控设置</button>

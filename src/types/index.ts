@@ -11,8 +11,11 @@ export interface CaptureSource {
   source_type: SourceType
   width: number
   height: number
+  x: number
+  y: number
   is_streaming: boolean
   rtsp_url: string | null
+  handle: number
 }
 
 export interface CaptureSourceList {
@@ -105,6 +108,7 @@ export interface AppConfig {
   ws_password: string
   auto_reconnect: boolean
   default_encode: EncodeConfig
+  preview_http_port: number
 }
 
 export interface RemoteStatus {

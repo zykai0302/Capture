@@ -66,7 +66,7 @@ describe('usePipeline', () => {
     invokeMock.mockResolvedValue(undefined)
 
     const { startStream } = usePipeline()
-    await startStream({ id: 'screen-0', source_type: SourceType.Monitor, name: '显示器 0', width: 1920, height: 1080 })
+    await startStream({ id: 'screen-0', source_type: SourceType.Monitor, name: '显示器 0', width: 1920, height: 1080, x: 0, y: 0, handle: 12345 })
 
     expect(invokeMock).toHaveBeenCalledWith('start_stream', {
       sourceId: 'screen-0',
@@ -74,6 +74,9 @@ describe('usePipeline', () => {
       sourceName: '显示器 0',
       width: 1920,
       height: 1080,
+      x: 0,
+      y: 0,
+      handle: 12345,
     })
   })
 
@@ -99,7 +102,7 @@ describe('usePipeline', () => {
     invokeMock.mockRejectedValue('Pipeline error')
 
     const { startStream, error } = usePipeline()
-    try { await startStream({ id: 'screen-0', source_type: SourceType.Monitor, name: '显示器 0', width: 1920, height: 1080 }) } catch {}
+    try { await startStream({ id: 'screen-0', source_type: SourceType.Monitor, name: '显示器 0', width: 1920, height: 1080, x: 0, y: 0, handle: 0 }) } catch {}
 
     expect(error.value).toBe('Pipeline error')
   })
@@ -145,10 +148,10 @@ describe('useSources', () => {
   it('refresh populates monitors and windows', async () => {
     const mockList: CaptureSourceList = {
       monitors: [
-        { id: 'screen-0', name: '主显示器', source_type: SourceType.Monitor, width: 1920, height: 1080, is_streaming: false, rtsp_url: null },
+        { id: 'screen-0', name: '主显示器', source_type: SourceType.Monitor, width: 1920, height: 1080, x: 0, y: 0, is_streaming: false, rtsp_url: null, handle: 0 },
       ],
       windows: [
-        { id: 'window-1', name: '记事本', source_type: SourceType.Window, width: 800, height: 600, is_streaming: false, rtsp_url: null },
+        { id: 'window-1', name: '记事本', source_type: SourceType.Window, width: 800, height: 600, x: 100, y: 100, is_streaming: false, rtsp_url: null, handle: 0 },
       ],
     }
     invokeMock.mockResolvedValue(mockList)
@@ -190,6 +193,7 @@ describe('useConfig', () => {
         framerate: 30, bitrate_kbps: 4000, max_bitrate_kbps: 6000,
         rate_control: RateControl.VBR, gop_size: 30, preset: EncodePreset.Balanced,
       },
+      preview_http_port: 8090,
     }
     invokeMock.mockResolvedValue(mockConfig)
 

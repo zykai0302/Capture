@@ -1,5 +1,7 @@
 pub mod gst_pipeline;
 pub mod manager;
+pub mod preview;
+pub mod mjpeg_server;
 
 use crate::capture::source::CaptureSource;
 use crate::encode::config::EncodeConfig;

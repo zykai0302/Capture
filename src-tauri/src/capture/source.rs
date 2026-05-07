@@ -1,9 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SourceType {
     Monitor,
     Window,
+}
+
+impl std::fmt::Display for SourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceType::Monitor => write!(f, "Monitor"),
+            SourceType::Window => write!(f, "Window"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,8 +22,11 @@ pub struct CaptureSource {
     pub source_type: SourceType,
     pub width: u32,
     pub height: u32,
+    pub x: i32,               // Window position X (screen coordinates)
+    pub y: i32,               // Window position Y (screen coordinates)
     pub is_streaming: bool,
     pub rtsp_url: Option<String>,
+    pub handle: u64,          // HMONITOR for monitors, HWND for windows (0 if not available)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,8 +63,11 @@ mod tests {
             source_type: SourceType::Monitor,
             width: 1920,
             height: 1080,
+            x: 0,
+            y: 0,
             is_streaming: false,
             rtsp_url: None,
+            handle: 0,
         }
     }
 
@@ -63,8 +78,11 @@ mod tests {
             source_type: SourceType::Window,
             width: 800,
             height: 600,
+            x: 100,
+            y: 100,
             is_streaming: false,
             rtsp_url: None,
+            handle: 0,
         }
     }
 

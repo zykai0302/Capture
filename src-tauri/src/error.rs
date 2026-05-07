@@ -14,10 +14,14 @@ pub enum AppError {
     Rtsp(String),
     #[error("Remote control error: {0}")]
     Remote(String),
+    #[error("Preview error: {0}")]
+    Preview(String),
     #[error("Config error: {0}")]
     Config(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Windows error: {0}")]
+    Windows(#[from] windows_result::Error),
 }
 
 impl serde::Serialize for AppError {
@@ -69,6 +73,12 @@ mod tests {
     fn app_error_display_remote() {
         let err = AppError::Remote("auth failed".to_string());
         assert_eq!(format!("{}", err), "Remote control error: auth failed");
+    }
+
+    #[test]
+    fn app_error_display_preview() {
+        let err = AppError::Preview("pipeline failed".to_string());
+        assert_eq!(format!("{}", err), "Preview error: pipeline failed");
     }
 
     #[test]

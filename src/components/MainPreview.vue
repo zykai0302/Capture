@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, watch, computed, inject } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import type { CaptureSource, PipelineStatus } from '../types'
+import { isPipelineError, isPipelineRunning } from '../types'
+import type { useConfig } from '../composables'
 import PipelineVisual from './PipelineVisual.vue'
 
 const props = defineProps<{
@@ -12,9 +15,57 @@ const emit = defineEmits<{
   stopStream: [sourceId: string]
 }>()
 
+// Inject config store for preview port
+const { config } = inject<ReturnType<typeof useConfig>>('config')!
+
+// Preview URL for MJPEG stream
+const previewUrl = ref<string>('')
+
+// Computed preview port from config, fallback to 8090
+const previewPort = computed(() => config.value?.preview_http_port ?? 8090)
+
 const isRunning = computed(() =>
-  !!props.pipelineStatus && props.pipelineStatus.state === 'Running'
+  !!props.pipelineStatus && isPipelineRunning(props.pipelineStatus.state)
 )
+
+const isStarting = computed(() =>
+  !!props.pipelineStatus && props.pipelineStatus.state === 'Starting'
+)
+
+const isError = computed(() =>
+  !!props.pipelineStatus && isPipelineError(props.pipelineStatus.state)
+)
+
+const errorMsg = computed(() => {
+  if (isError.value && props.pipelineStatus) {
+    const state = props.pipelineStatus.state
+    return typeof state === 'object' && 'Error' in state ? state.Error : ''
+  }
+  return ''
+})
+
+// Watch streaming state to start/stop preview
+watch(isRunning, async (running) => {
+  if (running && props.selectedSource) {
+    try {
+      await invoke('start_preview', { sourceId: props.selectedSource.id })
+      previewUrl.value = `http://127.0.0.1:${previewPort.value}/${props.selectedSource.id}`
+    } catch (e) {
+      console.error('Failed to start preview:', e)
+      previewUrl.value = ''
+    }
+  } else {
+    // Notify backend to clean up preview resources
+    if (props.selectedSource) {
+      try {
+        await invoke('stop_preview', { sourceId: props.selectedSource.id })
+      } catch (e) {
+        // Ignore errors — source may already be stopped
+      }
+    }
+    previewUrl.value = ''
+  }
+}, { immediate: true })
 
 function copyUrl(url: string) {
   navigator.clipboard?.writeText(url)
@@ -60,28 +111,29 @@ function copyUrl(url: string) {
       <div class="preview-container">
         <div class="preview-canvas">
           <template v-if="isRunning">
-            <!-- Running state: show placeholder content -->
-            <svg viewBox="0 0 960 540" style="width:100%;height:100%;">
-              <rect width="960" height="540" fill="#0f1523"/>
-              <rect x="0" y="500" width="960" height="40" fill="#151d2e"/>
-              <rect x="10" y="508" width="25" height="25" rx="3" fill="#1e2d45"/>
-              <rect x="45" y="508" width="25" height="25" rx="3" fill="#1e2d45"/>
-              <rect x="80" y="508" width="25" height="25" rx="3" fill="#1e2d45"/>
-              <rect x="30" y="30" width="60" height="50" rx="6" fill="#1e2d45"/>
-              <rect x="30" y="85" width="60" height="8" rx="2" fill="#5a6e8f"/>
-              <rect x="140" y="20" width="500" height="350" rx="8" fill="#1a2438" stroke="#2a4a6b" stroke-width="1"/>
-              <rect x="140" y="20" width="500" height="32" rx="8" fill="#253350"/>
-              <rect x="148" y="28" width="10" height="10" rx="5" fill="#ff5f57"/>
-              <rect x="162" y="28" width="10" height="10" rx="5" fill="#febc2e"/>
-              <rect x="176" y="28" width="10" height="10" rx="5" fill="#28c840"/>
-              <rect x="160" y="65" width="200" height="10" rx="2" fill="#2a4a6b"/>
-              <rect x="160" y="85" width="460" height="6" rx="2" fill="#1e2d45"/>
-              <rect x="160" y="100" width="420" height="6" rx="2" fill="#1e2d45"/>
-              <rect x="670" y="20" width="260" height="350" rx="8" fill="#1a2438" stroke="#2a4a6b" stroke-width="1"/>
-              <rect x="0" y="0" width="960" height="2" fill="rgba(0,212,255,0.06)" rx="1">
-                <animate attributeName="y" from="-2" to="540" dur="4s" repeatCount="indefinite"/>
-              </rect>
-            </svg>
+            <img
+              v-if="previewUrl"
+              :src="previewUrl"
+              class="preview-mjpeg"
+              alt="Live preview"
+            />
+            <div v-else class="preview-loading">加载预览...</div>
+          </template>
+          <template v-else-if="isStarting">
+            <div class="preview-starting">
+              <div class="starting-spinner"></div>
+              <div class="starting-text">启动推流中...</div>
+              <div class="starting-sub">正在初始化捕获与编码管线</div>
+            </div>
+          </template>
+          <template v-else-if="isError">
+            <div class="preview-error">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.6">
+                <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+              </svg>
+              <div class="error-text">推流失败</div>
+              <div class="error-detail">{{ errorMsg }}</div>
+            </div>
           </template>
           <template v-else>
             <div class="preview-placeholder">
@@ -244,6 +296,69 @@ function copyUrl(url: string) {
 .preview-placeholder-sub {
   font-size: 12px;
   opacity: 0.5;
+}
+
+.preview-mjpeg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #0f1523;
+}
+
+.preview-loading {
+  text-align: center;
+  color: var(--text-muted, #666);
+  font-size: 13px;
+}
+
+.preview-starting {
+  text-align: center;
+  color: var(--accent-cyan);
+}
+
+.starting-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(0, 212, 255, 0.2);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  margin: 0 auto 12px;
+  animation: spin 1s linear infinite;
+}
+
+.starting-text {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.starting-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.preview-error {
+  text-align: center;
+  color: var(--accent-red);
+}
+
+.error-text {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 8px;
+  margin-bottom: 6px;
+}
+
+.error-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 300px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .preview-hud {

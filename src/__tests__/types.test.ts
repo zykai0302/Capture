@@ -158,8 +158,11 @@ describe('CaptureSource', () => {
       source_type: SourceType.Monitor,
       width: 1920,
       height: 1080,
+      x: 0,
+      y: 0,
       is_streaming: false,
       rtsp_url: null,
+      handle: 0,
     }
     expect(source.id).toBe('screen-0')
     expect(source.source_type).toBe('Monitor')
@@ -170,8 +173,8 @@ describe('CaptureSource', () => {
 describe('CaptureSourceList', () => {
   it('has monitors and windows arrays', () => {
     const list: CaptureSourceList = {
-      monitors: [{ id: 'screen-0', name: 'M', source_type: SourceType.Monitor, width: 1920, height: 1080, is_streaming: false, rtsp_url: null }],
-      windows: [{ id: 'window-1', name: 'W', source_type: SourceType.Window, width: 800, height: 600, is_streaming: false, rtsp_url: null }],
+      monitors: [{ id: 'screen-0', name: 'M', source_type: SourceType.Monitor, width: 1920, height: 1080, x: 0, y: 0, is_streaming: false, rtsp_url: null, handle: 0 }],
+      windows: [{ id: 'window-1', name: 'W', source_type: SourceType.Window, width: 800, height: 600, x: 100, y: 100, is_streaming: false, rtsp_url: null, handle: 0 }],
     }
     expect(list.monitors).toHaveLength(1)
     expect(list.windows).toHaveLength(1)
@@ -221,6 +224,7 @@ describe('AppConfig', () => {
       ws_password: '',
       auto_reconnect: true,
       default_encode: defaultEncodeConfig(),
+      preview_http_port: 8090,
     }
     expect(config.rtsp_port).toBe(8554)
     expect(config.auto_reconnect).toBe(true)

@@ -47,7 +47,7 @@ async fn list_sources() -> Result<CaptureSourceList, AppError> {
 }
 
 #[tauri::command]
-async fn start_stream(source_id: String, source_type: String, source_name: String, width: u32, height: u32, state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+async fn start_stream(source_id: String, source_type: String, source_name: String, width: u32, height: u32, x: i32, y: i32, handle: u64, state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     let pipeline_manager = state.pipeline_manager.clone();
     let config = state.config.lock().unwrap().default_encode.clone();
 
@@ -63,8 +63,11 @@ async fn start_stream(source_id: String, source_type: String, source_name: Strin
         source_type: st,
         width,
         height,
+        x,
+        y,
         is_streaming: false,
         rtsp_url: None,
+        handle,
     };
 
     tokio::task::spawn_blocking(move || {
@@ -192,6 +195,45 @@ fn get_remote_status(state: tauri::State<AppState>) -> Result<RemoteStatus, AppE
     }
 }
 
+#[tauri::command]
+async fn capture_thumbnail(source_id: String, source_type: String, width: u32, height: u32, handle: u64) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let data = capture::thumbnail::capture_thumbnail(&source_id, &source_type, width, height, handle)?;
+        Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data))
+    })
+    .await
+    .map_err(|e| AppError::Capture(format!("Task join error: {}", e)))?
+}
+
+#[tauri::command]
+async fn start_preview(source_id: String, state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    log::info!("start_preview command called for: {}", source_id);
+    let pipeline_manager = state.pipeline_manager.clone();
+    match pipeline_manager.start_preview(&source_id).await {
+        Ok(()) => {
+            log::info!("start_preview succeeded for: {}", source_id);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("start_preview failed for {}: {}", source_id, e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_preview_url(source_id: String, state: tauri::State<'_, AppState>) -> Result<Option<String>, AppError> {
+    let pipeline_manager = state.pipeline_manager.clone();
+    Ok(pipeline_manager.get_preview_url(&source_id))
+}
+
+#[tauri::command]
+async fn stop_preview(source_id: String, state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    let pipeline_manager = state.pipeline_manager.clone();
+    pipeline_manager.stop_preview(&source_id).await;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let config = AppConfig::default();
@@ -231,6 +273,10 @@ pub fn run() {
             start_remote_control,
             stop_remote_control,
             get_remote_status,
+            capture_thumbnail,
+            start_preview,
+            get_preview_url,
+            stop_preview,
         ])
         .setup(|app| {
             log::info!("Tauri setup callback - starting hotplug monitor");

@@ -25,6 +25,12 @@ provide('remote', remoteStore)
 
 const selectedSource = ref<CaptureSource | null>(null)
 
+const showConfigPanel = ref(false)
+
+function onToggleSettings() {
+  showConfigPanel.value = !showConfigPanel.value
+}
+
 function onSelectSource(source: CaptureSource) {
   selectedSource.value = source
 }
@@ -39,8 +45,8 @@ async function onStopStream(sourceId: string) {
 </script>
 
 <template>
-  <div class="app">
-    <TopBar />
+  <div class="app" :class="{ 'config-visible': showConfigPanel }" :style="{ gridTemplateColumns: showConfigPanel ? '320px 1fr 340px' : '320px 1fr 0px' }">
+    <TopBar :settings-visible="showConfigPanel" @toggle-settings="onToggleSettings" />
     <SourceList
       :selected-source-id="selectedSource?.id ?? null"
       @select-source="onSelectSource"
@@ -50,7 +56,7 @@ async function onStopStream(sourceId: string) {
       :pipeline-status="selectedSource ? pipelineStore.pipelines.value[selectedSource.id] : undefined"
       @stop-stream="onStopStream"
     />
-    <ConfigPanel :selected-source-id="selectedSource?.id ?? null" />
+    <ConfigPanel :selected-source-id="selectedSource?.id ?? null" :visible="showConfigPanel" />
     <StatusBar />
   </div>
 </template>
@@ -63,17 +69,20 @@ async function onStopStream(sourceId: string) {
 .app {
   display: grid;
   grid-template-rows: 52px 1fr 28px;
-  grid-template-columns: 320px 1fr 340px;
   grid-template-areas:
     "topbar topbar topbar"
     "left   center right"
     "status status status";
   height: 100vh;
   overflow: hidden;
+  transition: grid-template-columns 0.3s ease;
 }
 
 @media (max-width: 1200px) {
   .app {
+    grid-template-columns: 260px 1fr 0px;
+  }
+  .app.config-visible {
     grid-template-columns: 260px 1fr 280px;
   }
 }

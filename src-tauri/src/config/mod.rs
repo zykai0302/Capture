@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub ws_password: String,
     pub auto_reconnect: bool,
     pub default_encode: EncodeConfig,
+    pub preview_http_port: u16,   // default: 8090
 }
 
 impl Default for AppConfig {
@@ -20,6 +21,7 @@ impl Default for AppConfig {
             ws_password: String::new(),
             auto_reconnect: true,
             default_encode: EncodeConfig::default(),
+            preview_http_port: 8090,
         }
     }
 }
@@ -37,6 +39,12 @@ mod tests {
         assert_eq!(config.ws_port, 9001);
         assert!(config.ws_password.is_empty());
         assert!(config.auto_reconnect);
+    }
+
+    #[test]
+    fn default_config_has_preview_http_port() {
+        let config = AppConfig::default();
+        assert_eq!(config.preview_http_port, 8090);
     }
 
     #[test]
@@ -72,6 +80,7 @@ mod tests {
                 mode: EncodeMode::CpuOnly,
                 ..EncodeConfig::default()
             },
+            preview_http_port: 9090,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
@@ -81,6 +90,7 @@ mod tests {
         assert_eq!(deserialized.ws_password, "secret");
         assert!(!deserialized.auto_reconnect);
         assert!(matches!(deserialized.default_encode.codec, Codec::H265));
+        assert_eq!(deserialized.preview_http_port, 9090);
     }
 
     #[test]

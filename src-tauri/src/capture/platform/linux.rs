@@ -63,8 +63,11 @@ fn enumerate_monitors() -> AppResult<Vec<CaptureSource>> {
                         source_type: SourceType::Monitor,
                         width,
                         height,
+                        x: 0,
+                        y: 0,
                         is_streaming: false,
                         rtsp_url: None,
+                        handle: 0,
                     };
                     monitor_list.push(source);
                     index += 1;
@@ -103,8 +106,11 @@ fn enumerate_monitors() -> AppResult<Vec<CaptureSource>> {
                                                     source_type: SourceType::Monitor,
                                                     width: w,
                                                     height: h,
+                                                    x: 0,
+                                                    y: 0,
                                                     is_streaming: false,
                                                     rtsp_url: None,
+                                                    handle: 0,
                                                 };
                                                 monitor_list.push(source);
                                                 index += 1;
@@ -129,8 +135,11 @@ fn enumerate_monitors() -> AppResult<Vec<CaptureSource>> {
             source_type: SourceType::Monitor,
             width: 1920,
             height: 1080,
+            x: 0,
+            y: 0,
             is_streaming: false,
             rtsp_url: None,
+            handle: 0,
         });
     }
 

@@ -51,8 +51,11 @@ fn enumerate_monitors() -> AppResult<Vec<CaptureSource>> {
                 source_type: SourceType::Monitor,
                 width,
                 height,
+                x: 0,
+                y: 0,
                 is_streaming: false,
                 rtsp_url: None,
+                handle: 0,
             };
             monitor_list.push(source);
         }

@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { CaptureSource, CaptureSourceList } from '../types'
@@ -8,6 +8,7 @@ export function useSources() {
   const windows = ref<CaptureSource[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const thumbnailMap = ref<Record<string, string>>({})
 
   async function refresh() {
     loading.value = true
@@ -23,11 +24,35 @@ export function useSources() {
     }
   }
 
-  const allSources = ref<CaptureSource[]>([])
-
-  function updateAllSources() {
-    allSources.value = [...monitors.value, ...windows.value]
+  async function fetchThumbnails() {
+    const sources = [...monitors.value, ...windows.value]
+    const results = await Promise.allSettled(
+      sources.map(async (source) => {
+        try {
+          const base64Str = await invoke<string>('capture_thumbnail', {
+            sourceId: source.id,
+            sourceType: source.source_type,
+            width: 320,
+            height: 180,
+            handle: source.handle,
+          })
+          return { id: source.id, url: `data:image/jpeg;base64,${base64Str}` }
+        } catch (e) {
+          console.error(`Thumbnail failed for ${source.id}:`, e)
+          throw e
+        }
+      })
+    )
+    const newMap: Record<string, string> = {}
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        newMap[result.value.id] = result.value.url
+      }
+    }
+    thumbnailMap.value = newMap
   }
+
+  const allSources = computed(() => [...monitors.value, ...windows.value])
 
   let unlistenAdded: UnlistenFn | null = null
   let unlistenRemoved: UnlistenFn | null = null
@@ -35,17 +60,23 @@ export function useSources() {
 
   onMounted(async () => {
     await refresh()
-    updateAllSources()
+    fetchThumbnails()
 
     unlistenAdded = await listen('source-added', () => {
-      refresh().then(updateAllSources)
+      refresh().then(() => {
+        fetchThumbnails()
+      })
     })
     unlistenRemoved = await listen('source-removed', () => {
-      refresh().then(updateAllSources)
+      refresh().then(() => {
+        fetchThumbnails()
+      })
     })
 
     refreshInterval = setInterval(() => {
-      refresh().then(updateAllSources)
+      refresh().then(() => {
+        fetchThumbnails()
+      })
     }, 5000)
   })
 
@@ -62,5 +93,6 @@ export function useSources() {
     loading,
     error,
     refresh,
+    thumbnailMap,
   }
 }

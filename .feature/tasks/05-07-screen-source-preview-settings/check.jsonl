@@ -1,0 +1,4 @@
+{"file": ".codebuddy/commands/feature/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".codebuddy/commands/feature/check-backend.md", "reason": "Backend check spec"}
+{"file": ".codebuddy/commands/feature/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".feature/spec/guides/cross-layer-thinking-guide.md", "reason": "验证跨层数据流：Rust/TS类型映射、snake_case/camelCase参数"}

@@ -1,0 +1,5 @@
+{"file": ".feature/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".feature/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".feature/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".feature/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层交互规范：Tauri命令snake_case到camelCase映射、类型映射、合约验证"}
+{"file": ".feature/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有模式：RemoteControlServer tokio模式、Tauri命令模式"}

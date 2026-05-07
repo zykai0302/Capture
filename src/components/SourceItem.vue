@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import type { CaptureSource, PipelineStatus } from '../types'
 import { SourceType, getPipelineStateLabel, isPipelineError, isPipelineRunning } from '../types'
+import { useSources } from '../composables/useSources'
 
 const props = defineProps<{
   source: CaptureSource
@@ -14,6 +15,9 @@ const emit = defineEmits<{
   startStream: [source: CaptureSource]
   stopStream: [sourceId: string]
 }>()
+
+const { thumbnailMap } = inject<ReturnType<typeof useSources>>('sources')!
+const thumbnailUrl = computed(() => thumbnailMap.value[props.source.id] || '')
 
 const isStreaming = computed(() =>
   props.pipelineStatus ? isPipelineRunning(props.pipelineStatus.state) : props.source.is_streaming
@@ -53,7 +57,13 @@ function copyUrl() {
   >
     <div class="source-item-top">
       <div class="source-preview">
-        <svg class="screen-preview-svg" viewBox="0 0 160 90">
+        <img
+          v-if="thumbnailUrl"
+          :src="thumbnailUrl"
+          class="preview-thumbnail"
+          alt="preview"
+        />
+        <svg v-else class="screen-preview-svg" viewBox="0 0 160 90">
           <rect width="160" height="90" fill="#1a2438"/>
           <template v-if="source.source_type === SourceType.Monitor">
             <rect x="10" y="8" width="60" height="35" rx="3" fill="#2a4a6b" opacity="0.5"/>
@@ -139,7 +149,6 @@ function copyUrl() {
   cursor: pointer;
   transition: all 0.25s;
   position: relative;
-  overflow: hidden;
   animation: slideInUp 0.3s ease forwards;
 }
 
@@ -201,6 +210,12 @@ function copyUrl() {
 .screen-preview-svg {
   width: 100%;
   height: 100%;
+}
+
+.preview-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .live-badge {
@@ -265,6 +280,7 @@ function copyUrl() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 26px;
 }
 
 .source-status {
@@ -272,6 +288,8 @@ function copyUrl() {
   align-items: center;
   gap: 5px;
   font-size: 11px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .status-indicator {
@@ -282,6 +300,7 @@ function copyUrl() {
 
 .status-idle .status-indicator { background: var(--text-muted); }
 .status-idle .status-text { color: var(--text-muted); }
+.status-text { white-space: nowrap; }
 .status-streaming .status-indicator { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
 .status-streaming .status-text { color: var(--accent-green); }
 .status-error .status-indicator { background: var(--accent-red); box-shadow: 0 0 4px var(--accent-red); }
@@ -310,6 +329,7 @@ function copyUrl() {
 .source-actions {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .source-action-btn {
