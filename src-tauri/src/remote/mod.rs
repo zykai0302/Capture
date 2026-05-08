@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod injector;
 pub mod websocket;
+pub mod ws_client;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -46,14 +47,14 @@ pub struct MouseClickData {
     pub action: ClickAction,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
     Right,
     Middle,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClickAction {
     Single,
     Double,
@@ -96,10 +97,21 @@ pub struct RemoteStatus {
     pub keyboard_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsClientStatus {
+    pub is_connected: bool,
+    pub is_reconnecting: bool,
+    pub reconnect_attempt: u32,
+    pub max_reconnect_attempts: u32,
+    pub remote_url: String,
+}
+
 #[allow(unused_imports)]
 pub use injector::RemoteInjector;
 #[allow(unused_imports)]
 pub use websocket::RemoteControlServer;
+#[allow(unused_imports)]
+pub use ws_client::WsRemoteClient;
 
 #[cfg(test)]
 mod tests {
@@ -290,6 +302,22 @@ mod tests {
         let deserialized: RemoteStatus = serde_json::from_str(&json).unwrap();
         assert!(!deserialized.is_running);
         assert_eq!(deserialized.client_count, 0);
+    }
+
+    #[test]
+    fn ws_client_status_serialization() {
+        let status = WsClientStatus {
+            is_connected: true,
+            is_reconnecting: false,
+            reconnect_attempt: 0,
+            max_reconnect_attempts: 3,
+            remote_url: "ws://192.168.1.100:9001".to_string(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: WsClientStatus = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.is_connected);
+        assert_eq!(deserialized.remote_url, "ws://192.168.1.100:9001");
+        assert_eq!(deserialized.max_reconnect_attempts, 3);
     }
 
     #[test]

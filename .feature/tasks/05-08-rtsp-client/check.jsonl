@@ -1,0 +1,5 @@
+{"file": ".codebuddy/commands/feature/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".codebuddy/commands/feature/check-backend.md", "reason": "Backend check spec"}
+{"file": ".codebuddy/commands/feature/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".feature/spec/guides/cross-layer-thinking-guide.md", "reason": "验收时验证 Rust ↔ TypeScript 类型映射和命名约定"}
+{"file": ".feature/spec/backend/error-handling.md", "reason": "验收时验证错误处理模式和 spawn_blocking 使用"}

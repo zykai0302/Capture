@@ -119,6 +119,89 @@ export interface RemoteStatus {
   keyboard_enabled: boolean
 }
 
+// === RTSP Client Types ===
+
+export enum RtspClientStateEnum {
+  Connecting = 'Connecting',
+  Connected = 'Connected',
+  Disconnected = 'Disconnected',
+  Offline = 'Offline',
+}
+
+export interface RtspClientStateReconnecting {
+  Reconnecting: { attempt: number; max_attempts: number }
+}
+
+export interface RtspClientStateError {
+  Error: string
+}
+
+export type RtspClientState =
+  | RtspClientStateEnum
+  | RtspClientStateReconnecting
+  | RtspClientStateError
+
+export interface RtspClientStatus {
+  stream_id: string
+  name: string
+  url: string
+  state: RtspClientState
+  resolution: [number, number] | null
+  fps: number
+  latency_ms: number
+  protocol: string
+}
+
+// === WebSocket Remote Client Types ===
+
+export interface WsClientStatus {
+  is_connected: boolean
+  is_reconnecting: boolean
+  reconnect_attempt: number
+  max_reconnect_attempts: number
+  remote_url: string
+}
+
+// === Client Remote Commands (relative coordinates) ===
+
+export enum MouseButton {
+  Left = 'Left',
+  Right = 'Right',
+  Middle = 'Middle',
+}
+
+export enum ClickAction {
+  Single = 'Single',
+  Double = 'Double',
+}
+
+export interface RelativeMouseMoveData {
+  rel_x: number
+  rel_y: number
+}
+
+export interface RelativeMouseClickData {
+  rel_x: number
+  rel_y: number
+  button: MouseButton
+  action: ClickAction
+}
+
+export interface RelativeMouseScrollData {
+  rel_x: number
+  rel_y: number
+  dx: number
+  dy: number
+}
+
+export interface RelativeMouseDragData {
+  from_rel_x: number
+  from_rel_y: number
+  to_rel_x: number
+  to_rel_y: number
+  button: MouseButton
+}
+
 // === Helper Functions ===
 
 export function defaultEncodeConfig(): EncodeConfig {
@@ -158,5 +241,33 @@ export function getPipelineStateLabel(state: PipelineState): string {
       default: return state
     }
   }
+  return state.Error
+}
+
+// === RTSP Client Helper Functions ===
+
+export function isRtspClientConnected(state: RtspClientState): boolean {
+  return state === RtspClientStateEnum.Connected
+}
+
+export function isRtspClientReconnecting(state: RtspClientState): boolean {
+  return typeof state === 'object' && 'Reconnecting' in state
+}
+
+export function isRtspClientError(state: RtspClientState): boolean {
+  return typeof state === 'object' && 'Error' in state
+}
+
+export function getRtspClientStateLabel(state: RtspClientState): string {
+  if (typeof state === 'string') {
+    switch (state) {
+      case RtspClientStateEnum.Connecting: return '连接中'
+      case RtspClientStateEnum.Connected: return '已连接'
+      case RtspClientStateEnum.Disconnected: return '已断开'
+      case RtspClientStateEnum.Offline: return '离线'
+      default: return state
+    }
+  }
+  if ('Reconnecting' in state) return `重连中 (${state.Reconnecting.attempt}/${state.Reconnecting.max_attempts})`
   return state.Error
 }

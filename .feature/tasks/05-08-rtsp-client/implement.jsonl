@@ -1,0 +1,6 @@
+{"file": ".feature/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".feature/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".feature/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".feature/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层特性：Rust 后端 ↔ TypeScript 前端通过 Tauri Commands 交互，需要遵循命名约定和类型映射"}
+{"file": ".feature/spec/backend/error-handling.md", "reason": "新增 Tauri 命令需要遵循 AppError 模式和 spawn_blocking 模式"}
+{"file": ".feature/spec/guides/code-reuse-thinking-guide.md", "reason": "RTSP 客户端复用 MJPEG 预览架构和 RemoteCommand 协议"}

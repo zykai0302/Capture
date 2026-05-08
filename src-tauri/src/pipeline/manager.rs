@@ -193,6 +193,11 @@ impl GstPipelineManager {
         }
     }
 
+    /// Clone the MJPEG server Arc for use by RTSP client manager
+    pub fn mjpeg_server_clone(&self) -> Arc<AsyncMutex<Option<MjpegServer>>> {
+        self.mjpeg_server.clone()
+    }
+
     pub async fn remove_preview_source(&self, source_id: &str) {
         let guard = self.mjpeg_server.lock().await;
         if let Some(server) = guard.as_ref() {

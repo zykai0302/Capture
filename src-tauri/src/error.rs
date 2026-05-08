@@ -14,6 +14,8 @@ pub enum AppError {
     Rtsp(String),
     #[error("Remote control error: {0}")]
     Remote(String),
+    #[error("RTSP client error: {0}")]
+    RtspClient(String),
     #[error("Preview error: {0}")]
     Preview(String),
     #[error("Config error: {0}")]
@@ -73,6 +75,12 @@ mod tests {
     fn app_error_display_remote() {
         let err = AppError::Remote("auth failed".to_string());
         assert_eq!(format!("{}", err), "Remote control error: auth failed");
+    }
+
+    #[test]
+    fn app_error_display_rtsp_client() {
+        let err = AppError::RtspClient("connection failed".to_string());
+        assert_eq!(format!("{}", err), "RTSP client error: connection failed");
     }
 
     #[test]

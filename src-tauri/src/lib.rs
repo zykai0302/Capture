@@ -16,15 +16,20 @@ use pipeline::manager::GstPipelineManager;
 use pipeline::{PipelineManager, PipelineStatus};
 use remote::injector::RemoteInjector;
 use remote::websocket::RemoteControlServer;
-use remote::RemoteStatus;
+use remote::ws_client::{ClientRemoteCommand, WsRemoteClient};
+use remote::{RemoteStatus, WsClientStatus};
+use rtsp::client::{RtspClientManager, RtspClientStatus};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+use tokio::sync::Mutex as AsyncMutex;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub pipeline_manager: Arc<GstPipelineManager>,
     pub remote_server: Arc<Mutex<Option<RemoteControlServer>>>,
     pub remote_injector: Arc<RemoteInjector>,
+    pub rtsp_client_manager: Arc<RtspClientManager>,
+    pub ws_remote_client: Arc<AsyncMutex<Option<WsRemoteClient>>>,
 }
 
 #[tauri::command]
@@ -234,10 +239,141 @@ async fn stop_preview(source_id: String, state: tauri::State<'_, AppState>) -> R
     Ok(())
 }
 
+#[tauri::command]
+async fn rtsp_client_connect(
+    name: String,
+    url: String,
+    protocol: String,
+    username: Option<String>,
+    password: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, AppError> {
+    let manager = state.rtsp_client_manager.clone();
+    let manager_for_mjpeg = manager.clone();
+    // Step 1: Create GStreamer pipeline in spawn_blocking (sync, no async ops)
+    let (stream_id, rx) = tokio::task::spawn_blocking(move || {
+        manager.create_pipeline(
+            &name,
+            &url,
+            &protocol,
+            username.as_deref(),
+            password.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::RtspClient(format!("Task join error: {}", e)))??;
+
+    // Step 2: Register with MJPEG server in async context
+    manager_for_mjpeg.register_mjpeg(&stream_id, rx).await?;
+
+    log::info!("RTSP client fully connected: stream_id={}", stream_id);
+    Ok(stream_id)
+}
+
+#[tauri::command]
+async fn rtsp_client_disconnect(
+    stream_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    let manager = state.rtsp_client_manager.clone();
+    tokio::task::spawn_blocking(move || {
+        manager.disconnect(&stream_id)
+    })
+    .await
+    .map_err(|e| AppError::RtspClient(format!("Task join error: {}", e)))?
+}
+
+#[tauri::command]
+async fn rtsp_client_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<RtspClientStatus>, AppError> {
+    let manager = state.rtsp_client_manager.clone();
+    tokio::task::spawn_blocking(move || {
+        Ok(manager.get_all_status())
+    })
+    .await
+    .map_err(|e| AppError::RtspClient(format!("Task join error: {}", e)))?
+}
+
+#[tauri::command]
+async fn ws_remote_connect(
+    url: String,
+    password: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = WsRemoteClient::new(url.clone(), password.unwrap_or_default());
+    client.connect().await?;
+    *state.ws_remote_client.lock().await = Some(client);
+    Ok(())
+}
+
+#[tauri::command]
+async fn ws_remote_disconnect(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client_opt = state.ws_remote_client.lock().await.take();
+    if let Some(client) = client_opt {
+        client.disconnect().await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn ws_remote_send_command(
+    command: ClientRemoteCommand,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client_guard = state.ws_remote_client.lock().await;
+    if let Some(client) = client_guard.as_ref() {
+        client.send_command(command).await?;
+        Ok(())
+    } else {
+        Err(AppError::Remote("WebSocket client not connected".to_string()))
+    }
+}
+
+#[tauri::command]
+async fn ws_remote_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<WsClientStatus, AppError> {
+    let client = state.ws_remote_client.lock().await;
+    if let Some(client) = client.as_ref() {
+        Ok(client.get_status().await)
+    } else {
+        Ok(WsClientStatus {
+            is_connected: false,
+            is_reconnecting: false,
+            reconnect_attempt: 0,
+            max_reconnect_attempts: 3,
+            remote_url: String::new(),
+        })
+    }
+}
+
+#[tauri::command]
+async fn ws_remote_set_resolution(
+    width: u32,
+    height: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = state.ws_remote_client.lock().await;
+    if let Some(client) = client.as_ref() {
+        client.set_remote_resolution(width, height).await;
+        log::info!("WS remote resolution set to {}x{}", width, height);
+        Ok(())
+    } else {
+        Err(AppError::Remote("WebSocket client not connected".to_string()))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let config = AppConfig::default();
     let pipeline_manager = Arc::new(GstPipelineManager::new(config.clone()));
+    let rtsp_client_manager = Arc::new(RtspClientManager::new(
+        pipeline_manager.mjpeg_server_clone(),
+        config.preview_http_port,
+    ));
 
     // RemoteInjector may fail (e.g., no display), wrap gracefully
     let remote_injector = match RemoteInjector::new() {
@@ -258,6 +394,8 @@ pub fn run() {
             pipeline_manager,
             remote_server: Arc::new(Mutex::new(None)),
             remote_injector,
+            rtsp_client_manager,
+            ws_remote_client: Arc::new(AsyncMutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -277,6 +415,14 @@ pub fn run() {
             start_preview,
             get_preview_url,
             stop_preview,
+            rtsp_client_connect,
+            rtsp_client_disconnect,
+            rtsp_client_status,
+            ws_remote_connect,
+            ws_remote_disconnect,
+            ws_remote_send_command,
+            ws_remote_status,
+            ws_remote_set_resolution,
         ])
         .setup(|app| {
             log::info!("Tauri setup callback - starting hotplug monitor");

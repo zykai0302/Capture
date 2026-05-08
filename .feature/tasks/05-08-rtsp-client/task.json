@@ -1,0 +1,48 @@
+{
+  "id": "rtsp-client",
+  "name": "rtsp-client",
+  "title": "RTSP Client: stream preview with remote control",
+  "description": "",
+  "status": "executing",
+  "executionMode": "subagent",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "zykai",
+  "assignee": "zykai",
+  "createdAt": "2026-05-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 4,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "artifacts": ["prd.md", "task_plan.md", "findings.md", "progress.md", "implementation-plan.md"],
+  "researchCompleted": true,
+  "prdValidated": true,
+  "notes": "",
+  "meta": {}
+}

@@ -14,6 +14,7 @@ This project's Rust backend follows strict concurrency safety rules due to the m
 
 | Pattern | Why | Do Instead |
 |---------|-----|------------|
+| `ElementFactory::make().build()` for GStreamer pipelines | `.build()` calls `unwrap()` internally — panics on missing element or invalid GType | Use `parse::launch()` + `pipeline.by_name()` + `set_property()` |
 | Synchronous Tauri commands calling GStreamer APIs | Blocks tokio runtime, freezes UI | Use `async` + `spawn_blocking` |
 | Holding `MutexGuard` across `.await` | `MutexGuard` is not `Send`, causes compile error or deadlock | Extract data, drop guard, then `.await` |
 | Acquiring multiple locks in inconsistent order | Deadlock risk | Always acquire `pipelines` before `rtsp_server`; or release one before acquiring the other |
