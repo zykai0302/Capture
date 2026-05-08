@@ -4,9 +4,10 @@
 
 ```
 remote/
-├── mod.rs       → RemoteCommand, MouseMoveData, MouseClickData, ..., RemoteStatus
-├── injector.rs  → RemoteInjector
-└── websocket.rs → RemoteControlServer, handle_client()
+├── mod.rs        → RemoteCommand, ClientRemoteCommand types, MouseMoveData, MouseClickData, ..., RemoteStatus, WsClientStatus
+├── injector.rs   → RemoteInjector
+├── websocket.rs  → RemoteControlServer, handle_client()
+└── ws_client.rs  → WsRemoteClient (WebSocket 反控客户端)
 ```
 
 ## 2 命令协议 (`mod.rs`)
@@ -302,3 +303,157 @@ client_count.fetch_sub(1)
 | WS 端口 | `9001` | `AppConfig::default().ws_port` |
 | WS 密码 | `""` (空，自动认证) | `AppConfig::default().ws_password` |
 | 绑定地址 | `0.0.0.0` | `websocket.rs` 硬编码 |
+
+---
+
+## 6 WebSocket 反控客户端 (`ws_client.rs`)
+
+### 6.1 概述
+
+WebSocket 反控客户端用于客户端模式，连接远端设备的 WebSocket 反控服务端，发送鼠标/键盘指令。与 `RemoteControlServer` 互为对端——服务端接收命令并注入本地系统，客户端发送命令控制远端。
+
+### 6.2 数据结构
+
+```rust
+pub struct WsRemoteClient {
+    ws_tx: Arc<Mutex<Option<WsSink>>>,
+    status: Arc<Mutex<WsClientStatus>>,
+    remote_resolution: Arc<Mutex<Option<(u32, u32)>>>,
+    reconnect_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+```
+
+**`WsClientStatus`** (定义在 `mod.rs`):
+
+```rust
+pub struct WsClientStatus {
+    pub is_connected: bool,
+    pub is_reconnecting: bool,
+    pub reconnect_attempt: u32,
+    pub max_reconnect_attempts: u32,
+    pub remote_url: String,
+}
+```
+
+### 6.3 客户端命令协议 (`ClientRemoteCommand`)
+
+前端发送的命令使用**相对坐标**（0.0~1.0），后端根据 `remote_resolution` 映射为绝对坐标后转为 `RemoteCommand` 发送：
+
+```rust
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientRemoteCommand {
+    MouseMove   { stream_id: String, data: RelativeMouseMoveData },
+    MouseClick  { stream_id: String, data: RelativeMouseClickData },
+    MouseScroll { stream_id: String, data: RelativeMouseScrollData },
+    MouseDrag   { stream_id: String, data: RelativeMouseDragData },
+    KeyPress    { stream_id: String, data: KeyPressData },
+    KeyCombo    { stream_id: String, data: KeyComboData },
+}
+```
+
+**相对坐标数据结构**:
+
+```rust
+pub struct RelativeMouseMoveData   { pub rel_x: f64, pub rel_y: f64 }
+pub struct RelativeMouseClickData  { pub rel_x: f64, pub rel_y: f64, pub button: MouseButton, pub action: ClickAction }
+pub struct RelativeMouseScrollData { pub rel_x: f64, pub rel_y: f64, pub dx: i32, pub dy: i32 }
+pub struct RelativeMouseDragData   { pub from_rel_x: f64, pub from_rel_y: f64, pub to_rel_x: f64, pub to_rel_y: f64, pub button: MouseButton }
+```
+
+### 6.4 坐标映射
+
+`send_command()` 内部将相对坐标映射为绝对坐标：
+
+```rust
+fn convert_command(cmd: &ClientRemoteCommand, width: u32, height: u32) -> RemoteCommand {
+    match cmd {
+        ClientRemoteCommand::MouseMove { stream_id, data } => {
+            RemoteCommand::MouseMove {
+                stream_id: stream_id.clone(),
+                data: MouseMoveData {
+                    x: (data.rel_x * width as f64).round() as i32,
+                    y: (data.rel_y * height as f64).round() as i32,
+                },
+            }
+        }
+        // ... 其他命令类似
+    }
+}
+```
+
+**关键前提**: `remote_resolution` 必须通过 `set_remote_resolution(width, height)` 设置，否则 `send_command()` 返回错误 "Remote resolution not available"。
+
+### 6.5 连接与认证流程
+
+```rust
+async fn connect(&self, url: &str, password: Option<&str>) -> AppResult<()> {
+    let (ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
+    let (ws_tx, mut ws_rx) = ws_stream.split();
+    
+    // 发送认证消息
+    if let Some(pwd) = password {
+        let auth_msg = serde_json::json!({"type": "auth", "password": pwd});
+        ws_tx.send(Message::Text(auth_msg.to_string())).await?;
+        // 等待认证响应
+        let response = ws_rx.next().await?;
+        // 验证认证成功
+    }
+    
+    // 启动接收循环 (处理 Pong/Close/Reconnect)
+    // ...
+}
+```
+
+### 6.6 自动重连
+
+WebSocket 断线后指数退避重连：
+- 初始 2s，翻倍至最大 30s
+- 3 次失败后标记 `is_reconnecting: false`（放弃重连）
+- 重连期间 `is_reconnecting: true`，`reconnect_attempt` 递增
+
+### 6.7 前端 → 后端 → 远端 命令流
+
+```
+前端 (RtspPreview.vue)           Tauri IPC                   WsRemoteClient              远端 WS Server
+  │                                 │                            │                            │
+  │ 鼠标移动 (relX=0.5, relY=0.3) │                            │                            │
+  │── invoke('ws_remote_send_command',                          │                            │
+  │   { command: {type:"mouse_move",│                            │                            │
+  │    stream_id:"rtsp-client-xxx", │                            │                            │
+  │    data:{rel_x:0.5,rel_y:0.3}}})                            │                            │
+  │                                 │ ws_remote_send_command()   │                            │
+  │                                 │──────────────────────────→│                            │
+  │                                 │                            │ convert_command():         │
+  │                                 │                            │ rel→abs: (960, 540)        │
+  │                                 │                            │ RemoteCommand::MouseMove   │
+  │                                 │                            │──────────────────────────→│
+  │                                 │                            │                            │ 执行 enigo.move_mouse()
+  │                                 │                            │←── {"status":"ok"} ──────│
+  │                                 │←── Ok(()) ───────────────│                            │
+  │←── Result(()) ─────────────────│                            │                            │
+```
+
+### 6.8 分辨率同步
+
+`remote_resolution` 是坐标映射的关键参数。设置方式：
+
+1. **前端自动同步** (`App.vue` watch):
+   ```typescript
+   watch(() => rtspClientStore.streams.value, (streams) => {
+     if (!wsRemoteStore.status.value.is_connected) return
+     for (const streamId in streams) {
+       const s = streams[streamId]
+       if (s.state === 'Connected' && s.resolution) {
+         const [w, h] = s.resolution
+         wsRemoteStore.setResolution(w, h)
+         break
+       }
+     }
+   }, { deep: true })
+   ```
+
+2. **Tauri 命令** `ws_remote_set_resolution`:
+   ```rust
+   #[tauri::command]
+   async fn ws_remote_set_resolution(width: u32, height: u32, state: State<'_, AppState>) -> Result<(), AppError>
+   ```

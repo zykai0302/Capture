@@ -321,6 +321,172 @@ async fn stop_preview(source_id: String, state: tauri::State<'_, AppState>) -> R
 
 ---
 
+### 1.18 `rtsp_client_connect`
+
+```rust
+#[tauri::command]
+async fn rtsp_client_connect(
+    name: String,
+    url: String,
+    protocol: String,
+    username: Option<String>,
+    password: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, AppError>
+```
+
+|| 方向 | 字段 | 类型 | 说明 |
+||------|------|------|------|
+|| 参数 | `name` | `string` | 流名称 |
+|| 参数 | `url` | `string` | RTSP URL |
+|| 参数 | `protocol` | `string` | "tcp" / "udp" |
+|| 参数 | `username` | `string \| null` | RTSP 认证用户名 |
+|| 参数 | `password` | `string \| null` | RTSP 认证密码 |
+|| 返回值 | — | `string` | stream_id (如 "rtsp-client-0af091c4") |
+
+**行为**:
+1. `spawn_blocking` 调用 `RtspClientManager::create_pipeline()` 创建 rtspsrc pipeline
+2. 注册 MJPEG frame source 到 MJPEG Server
+3. 返回生成的 stream_id
+
+---
+
+### 1.19 `rtsp_client_disconnect`
+
+```rust
+#[tauri::command]
+async fn rtsp_client_disconnect(
+    stream_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError>
+```
+
+|| 方向 | 字段 | 类型 | 说明 |
+||------|------|------|------|
+|| 参数 | `streamId` | `string` | 流 ID |
+|| 返回值 | — | `null` | |
+
+**行为**: 停止 RTSP 客户端 pipeline 并从 MJPEG Server 移除 frame source。
+
+---
+
+### 1.20 `rtsp_client_status`
+
+```rust
+#[tauri::command]
+async fn rtsp_client_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<RtspClientStatus>, AppError>
+```
+
+|| 方向 | 字段 | 类型 |
+||------|------|------|
+|| 返回值 | — | `RtspClientStatus[]` |
+
+**行为**: 返回所有 RTSP 客户端流的状态（stream_id, name, url, state, resolution, fps, latency_ms, protocol）。
+
+---
+
+### 1.21 `ws_remote_connect`
+
+```rust
+#[tauri::command]
+async fn ws_remote_connect(
+    url: String,
+    password: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError>
+```
+
+|| 方向 | 字段 | 类型 | 说明 |
+||------|------|------|------|
+|| 参数 | `url` | `string` | WebSocket 服务端 URL (如 "ws://192.168.1.100:9001") |
+|| 参数 | `password` | `string \| null` | 认证密码 |
+|| 返回值 | — | `null` | |
+
+**行为**:
+1. `WsRemoteClient::connect(url, password)` 连接远端 WS 服务
+2. 发送 auth 消息，验证认证
+3. 启动接收循环（处理 Pong/Close）
+4. 存储 `WsRemoteClient` 到 `AppState.ws_remote_client`
+
+---
+
+### 1.22 `ws_remote_disconnect`
+
+```rust
+#[tauri::command]
+async fn ws_remote_disconnect(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError>
+```
+
+**行为**: 断开 WebSocket 连接，取消重连任务。
+
+---
+
+### 1.23 `ws_remote_send_command`
+
+```rust
+#[tauri::command]
+async fn ws_remote_send_command(
+    command: ClientRemoteCommand,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError>
+```
+
+|| 方向 | 字段 | 类型 | 说明 |
+||------|------|------|------|
+|| 参数 | `command` | `ClientRemoteCommand` | 客户端命令（相对坐标） |
+|| 返回值 | — | `null` | |
+
+**行为**:
+1. 从 `remote_resolution` 读取远端分辨率
+2. 将 `ClientRemoteCommand`（相对坐标 0.0~1.0）映射为 `RemoteCommand`（绝对坐标）
+3. 通过 WebSocket 发送到远端服务
+
+> **前提**: 必须先调用 `ws_remote_set_resolution` 设置远端分辨率，否则返回错误。
+
+---
+
+### 1.24 `ws_remote_status`
+
+```rust
+#[tauri::command]
+async fn ws_remote_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<WsClientStatus, AppError>
+```
+
+|| 方向 | 字段 | 类型 |
+||------|------|------|
+|| 返回值 | — | `WsClientStatus` |
+
+**行为**: 返回 WebSocket 客户端连接状态（is_connected, is_reconnecting, reconnect_attempt, max_reconnect_attempts, remote_url）。
+
+---
+
+### 1.25 `ws_remote_set_resolution`
+
+```rust
+#[tauri::command]
+async fn ws_remote_set_resolution(
+    width: u32,
+    height: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError>
+```
+
+|| 方向 | 字段 | 类型 | 说明 |
+||------|------|------|------|
+|| 参数 | `width` | `number` | 远端屏幕宽度 |
+|| 参数 | `height` | `number` | 远端屏幕高度 |
+|| 返回值 | — | `null` | |
+
+**行为**: 设置 `WsRemoteClient.remote_resolution`，用于 `send_command()` 的坐标映射。前端通过 `watch` 在 RTSP 客户端检测到分辨率时自动调用。
+
+---
+
 ## 2 命令注册表
 
 ```rust
@@ -342,6 +508,14 @@ tauri::generate_handler![
     start_preview,
     get_preview_url,
     stop_preview,
+    rtsp_client_connect,
+    rtsp_client_disconnect,
+    rtsp_client_status,
+    ws_remote_connect,
+    ws_remote_disconnect,
+    ws_remote_send_command,
+    ws_remote_status,
+    ws_remote_set_resolution,
 ]
 ```
 
@@ -372,4 +546,4 @@ Tauri IPC 使用 **camelCase** 参数名（前端）映射到 **snake_case**（R
 | `source_type` | `sourceType` |
 | `source_name` | `sourceName` |
 
-其他参数 (`width`, `height`, `x`, `y`, `handle`, `port`, `password`, `config`) 名称一致，无需映射。
+其他参数 (`width`, `height`, `x`, `y`, `handle`, `port`, `password`, `config`, `url`, `protocol`, `username`) 名称一致，无需映射。

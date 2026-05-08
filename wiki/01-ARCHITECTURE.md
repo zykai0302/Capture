@@ -51,6 +51,8 @@ pub struct AppState {
     pub pipeline_manager: Arc<GstPipelineManager>,       // Pipeline 管理器（跨线程共享）
     pub remote_server: Arc<Mutex<Option<RemoteControlServer>>>, // WS 服务（可选，互斥）
     pub remote_injector: Arc<RemoteInjector>,            // 输入注入器（跨线程共享）
+    pub rtsp_client_manager: Arc<RtspClientManager>,     // RTSP 客户端管理器
+    pub ws_remote_client: Arc<AsyncMutex<Option<WsRemoteClient>>>, // WS 反控客户端（可选，异步互斥）
 }
 ```
 
@@ -59,7 +61,8 @@ pub struct AppState {
 1. `AppConfig::default()` → 创建默认配置
 2. `GstPipelineManager::new(config.clone())` → 创建 Pipeline 管理器
 3. `RemoteInjector::new()` → 创建输入注入器（失败则 `process::exit(1)`）
-4. `tauri::Builder::default()` → 注册插件、管理状态、注册命令、启动热插拔
+4. `RtspClientManager::new(pipeline_manager.mjpeg_server_clone(), config.preview_http_port)` → 创建 RTSP 客户端管理器
+5. `tauri::Builder::default()` → 注册插件、管理状态、注册命令、启动热插拔
 
 ## 3 并发模型
 
@@ -84,6 +87,8 @@ tokio::task::spawn_blocking(move || {
 - `update_encode_config` → `pipeline_manager.update_config()`
 - `get_available_encoders` → `gst_pipeline::detect_available_encoders()`
 - `get_gpu_capabilities` → `encode::detector::detect_gpu_capabilities()`
+- `rtsp_client_connect` → `rtsp_client_manager.create_pipeline()` + `register_mjpeg()`
+- `rtsp_client_disconnect` → `rtsp_client_manager.remove_pipeline()`
 
 ### 3.2 锁策略与死锁预防
 
@@ -121,7 +126,8 @@ fn stop_pipeline(&self, source_id: &str) -> AppResult<()> {
 | RTSP Server | `std::thread::Builder` (in `RtspServer::new`) | 运行 gst-rtsp-server + 专属 GLib MainContext/MainLoop + channel 轮询 | 进程级，永不退出 |
 | Hotplug Monitor | `std::thread::spawn` (in `start_hotplug_monitor`) | 每 2s 轮询源变更 | 进程级，永不退出 |
 | WebSocket Accept | `tokio::spawn` (in `RemoteControlServer::start`) | 接受 WS 连接 | 随服务启停 |
-| WebSocket Client | `tokio::spawn` (per connection) | 处理单个 WS 客户端 | 随连接断开 |
+| WebSocket Client (服务端) | `tokio::spawn` (per connection) | 处理单个 WS 客户端 | 随连接断开 |
+| WS Remote Client (客户端) | `tokio::spawn` (in `WsRemoteClient::connect`) | 发送反控命令 + 接收循环 | 随连接断开 |
 
 ### 3.4 热插拔线程超时保护
 
@@ -164,6 +170,10 @@ lib.rs
   ├→ pipeline::{PipelineManager, PipelineStatus}
   ├→ remote::injector::RemoteInjector
   ├→ remote::websocket::RemoteControlServer
+  ├→ remote::ws_client::WsRemoteClient
+  ├→ remote::WsClientStatus
+  ├→ rtsp::RtspServer
+  ├→ rtsp::client::RtspClientManager
   └→ remote::RemoteStatus
 
 pipeline/manager.rs
@@ -223,10 +233,11 @@ capture/platform/linux.rs
 1. AppConfig::default()
 2. GstPipelineManager::new(config)
 3. RemoteInjector::new() → 失败则 process::exit(1)
-4. tauri::Builder::default()
+4. RtspClientManager::new(pipeline_manager.mjpeg_server_clone(), config.preview_http_port)
+5. tauri::Builder::default()
    .plugin(tauri_plugin_opener::init())
    .manage(AppState { ... })
-   .invoke_handler(generate_handler![13个命令])
+   .invoke_handler(generate_handler![25个命令])
    .setup(|app| {
        capture::hotplug::start_hotplug_monitor(app.handle().clone(), pipeline_manager)
    })

@@ -65,11 +65,18 @@ const pipelineStore = usePipeline()
 const sourcesStore = useSources()
 const configStore = useConfig()
 const remoteStore = useRemoteControl()
+const rtspClientStore = useRtspClient()
+const wsRemoteStore = useWsRemote()
 
 provide('pipeline', pipelineStore)
 provide('sources', sourcesStore)
 provide('config', configStore)
 provide('remote', remoteStore)
+provide('rtspClient', rtspClientStore)
+provide('wsRemote', wsRemoteStore)
+
+// 模式切换
+const appMode = ref<'server' | 'client'>('server')
 
 // 设置面板折叠状态
 const showConfigPanel = ref(false)
@@ -77,6 +84,23 @@ const showConfigPanel = ref(false)
 function onToggleSettings() {
   showConfigPanel.value = !showConfigPanel.value
 }
+
+// 自动同步 RTSP 客户端分辨率到 WS 远程客户端
+watch(
+  () => rtspClientStore.streams.value,
+  (streams) => {
+    if (!wsRemoteStore.status.value.is_connected) return
+    for (const streamId in streams) {
+      const s = streams[streamId]
+      if (s.state === 'Connected' && s.resolution) {
+        const [w, h] = s.resolution
+        wsRemoteStore.setResolution(w, h)
+        break
+      }
+    }
+  },
+  { deep: true }
+)
 ```
 
 子组件通过 `inject` 获取：
@@ -218,26 +242,27 @@ await invoke('start_remote_control', { port: port ?? null, password: password ??
 ```
 App.vue
 ├── TopBar.vue
-│   └── inject: config, pipeline
-├── SourceList.vue
-│   ├── inject: sources, pipeline
-│   └── SourceItem.vue × N
-│       ├── props: source, pipelineStatus?, selected?
-│       └── emits: select, startStream, stopStream
-├── MainPreview.vue
-│   ├── props: selectedSource, pipelineStatus?
-│   ├── emits: stopStream
-│   └── PipelineVisual.vue
-│       └── props: pipelineStatus?
-├── ConfigPanel.vue
-│   ├── props: selectedSourceId
-│   ├── EncodingConfig.vue
-│   │   ├── props: sourceId
-│   │   └── inject: config, pipeline
-│   ├── RemoteControl.vue
-│   │   └── inject: remote
-│   └── NetworkConfig.vue
-│       └── inject: config, pipeline
+│   └── props: settingsVisible, appMode → emits: toggleSettings, modeChange
+├── [Server Mode]
+│   ├── SourceList.vue
+│   │   ├── inject: sources, pipeline
+│   │   └── SourceItem.vue × N
+│   ├── MainPreview.vue
+│   │   ├── props: selectedSource, pipelineStatus?
+│   │   └── PipelineVisual.vue
+│   └── ConfigPanel.vue
+│       ├── EncodingConfig.vue
+│       ├── RemoteControl.vue
+│       └── NetworkConfig.vue
+├── [Client Mode]
+│   ├── RtspStreamList.vue
+│   │   └── inject: rtspClient
+│   ├── RtspPreview.vue
+│   │   ├── inject: rtspClient, wsRemote
+│   │   └── props: streamId
+│   └── RemoteControlClient.vue
+│       ├── inject: wsRemote
+│       └── VirtualKeyboard.vue
 └── StatusBar.vue
     └── inject: pipeline, config
 ```
@@ -375,6 +400,8 @@ export { usePipeline } from './usePipeline'
 export { useSources } from './useSources'
 export { useConfig } from './useConfig'
 export { useRemoteControl } from './useRemoteControl'
+export { useRtspClient } from './useRtspClient'
+export { useWsRemote } from './useWsRemote'
 ```
 
 ## 7 `src/vite-env.d.ts`
@@ -382,3 +409,105 @@ export { useRemoteControl } from './useRemoteControl'
 ```typescript
 /// <reference types="vite/client" />
 ```
+
+---
+
+## 8 客户端模式组件
+
+### 8.1 RtspStreamList
+
+| 区域 | 内容 |
+|------|------|
+| 头部 | "RTSP 流" + "添加流" 按钮 |
+| 表单 | 名称/URL/协议(TCP/UDP)/用户名/密码 输入 → "连接" 按钮 |
+| 列表 | 已连接流 × N：名称 + 状态徽章 + URL + 分辨率/延迟/FPS + 断开/删除按钮 |
+
+**inject**: `rtspClient` (useRtspClient)
+
+**状态徽章**: Connecting→蓝色 | Connected→绿色 | Reconnecting→橙色 | Error→红色 | Offline→灰色 | Disconnected→灰色
+
+### 8.2 RtspPreview
+
+| 区域 | 内容 |
+|------|------|
+| 标题栏 | 流名称 + 状态 + 反控开关 |
+| 预览 | MJPEG 实时画面 (`<img src="http://127.0.0.1:{port}/{stream_id}">`) |
+| HUD | 分辨率 + FPS + 延迟 |
+| 十字准星 | 反控模式开启时显示 |
+
+**inject**: `rtspClient`, `wsRemote`
+
+**反控鼠标事件**: `@mousedown`, `@mouseup`, `@mousemove` → 计算相对坐标 (0.0~1.0) → `wsRemote.sendMouseMove/sendMouseClick`
+
+### 8.3 RemoteControlClient
+
+| 区域 | 内容 |
+|------|------|
+| WS 配置 | URL 输入 + 密码输入 + 连接/断开按钮 |
+| 连接状态 | 指示灯(绿/灰/橙) + URL + 重连状态 |
+| 控制能力 | 6 项能力网格 (鼠标移动/点击/滚动/拖拽/键盘/快捷键) |
+| 虚拟键盘 | VirtualKeyboard 组件 |
+
+**inject**: `wsRemote`
+
+### 8.4 VirtualKeyboard
+
+| 区域 | 内容 |
+|------|------|
+| QWERTY 键盘 | 3 行字母键 + 数字行 |
+| 快捷键面板 | Ctrl+Alt+Del / Alt+F4 / Win+D / Ctrl+C / Ctrl+V 等 |
+
+**inject**: `wsRemote`
+
+---
+
+## 9 客户端模式 Composable
+
+### 9.1 `useRtspClient`
+
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| `streams` | `ref<Record<string, RtspClientStatus>>` | 以 stream_id 为 key 的流状态映射 |
+| `loading` | `ref<boolean>` | 加载状态 |
+| `error` | `ref<string \| null>` | 错误信息 |
+| `connect(name, url, protocol, username?, password?)` | `async function` | `invoke('rtsp_client_connect', ...)` |
+| `disconnect(streamId)` | `async function` | `invoke('rtsp_client_disconnect', ...)` |
+| `refreshStatus()` | `async function` | `invoke('rtsp_client_status')` |
+
+**轮询**: 每 **3 秒**自动刷新流状态。
+
+### 9.2 `useWsRemote`
+
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| `status` | `ref<WsClientStatus>` | WS 客户端连接状态 |
+| `loading` | `ref<boolean>` | 加载状态 |
+| `error` | `ref<string \| null>` | 错误信息 |
+| `controlEnabled` | `ref<boolean>` | 反控开关状态 |
+| `connect(url, password?)` | `async function` | `invoke('ws_remote_connect', ...)` |
+| `disconnect()` | `async function` | `invoke('ws_remote_disconnect')` |
+| `sendMouseMove(streamId, relX, relY)` | `async function` | 发送鼠标移动 |
+| `sendMouseClick(streamId, relX, relY, button, action)` | `async function` | 发送鼠标点击 |
+| `sendMouseScroll(streamId, relX, relY, dx, dy)` | `async function` | 发送鼠标滚动 |
+| `sendMouseDrag(streamId, fromRelX, fromRelY, toRelX, toRelY, button)` | `async function` | 发送鼠标拖拽 |
+| `sendKeyPress(streamId, key, modifiers?)` | `async function` | 发送按键 |
+| `sendKeyCombo(streamId, keys)` | `async function` | 发送组合键 |
+| `setResolution(width, height)` | `async function` | `invoke('ws_remote_set_resolution', ...)` |
+
+**轮询**: 每 **3 秒**自动刷新 WS 客户端状态。
+
+**IPC 超时**: 所有 invoke 调用通过 `invokeWithTimeout` 包装，**30 秒超时**。
+
+---
+
+## 10 客户端模式样式
+
+客户端模式使用紫色系标识，区别于服务端模式的青色系：
+
+```css
+.app.client-mode {
+  --mode-accent: var(--accent-purple);
+}
+```
+
+**TopBar 模式切换**: 服务端(Tab) / 客户端(Tab)，客户端 Tab 使用紫色高亮。

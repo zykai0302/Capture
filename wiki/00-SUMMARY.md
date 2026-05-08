@@ -40,7 +40,8 @@
 │   └── vite.svg
 │
 ├── design/
-│   └── ui-preview.html
+│   ├── ui-preview.html
+│   └── rtsp-client.html
 │
 ├── src/
 │   ├── main.ts
@@ -55,7 +56,9 @@
 │   │   ├── usePipeline.ts
 │   │   ├── useSources.ts
 │   │   ├── useConfig.ts
-│   │   └── useRemoteControl.ts
+│   │   ├── useRemoteControl.ts
+│   │   ├── useRtspClient.ts
+│   │   └── useWsRemote.ts
 │   ├── components/
 │   │   ├── TopBar.vue
 │   │   ├── SourceList.vue
@@ -66,7 +69,12 @@
 │   │   ├── EncodingConfig.vue
 │   │   ├── NetworkConfig.vue
 │   │   ├── RemoteControl.vue
-│   │   └── StatusBar.vue
+│   │   ├── StatusBar.vue
+│   │   └── RtspClient/
+│   │       ├── RtspStreamList.vue
+│   │       ├── RtspPreview.vue
+│   │       ├── RemoteControlClient.vue
+│   │       └── VirtualKeyboard.vue
 │   ├── styles/
 │   │   ├── variables.css
 │   │   └── global.css
@@ -114,11 +122,13 @@
 │       │   └── mjpeg_server.rs   → MjpegServer (tokio HTTP MJPEG)
 │       ├── rtsp/
 │       │   ├── mod.rs
-│       │   └── server.rs      → RtspServer (独立 MainContext + channel)
+│       │   ├── server.rs      → RtspServer (独立 MainContext + channel)
+│       │   └── client.rs      → RtspClientManager (RTSP 拉流 + MJPEG 转发)
 │       └── remote/
 │           ├── mod.rs
 │           ├── injector.rs
-│           └── websocket.rs
+│           ├── websocket.rs
+│           └── ws_client.rs   → WsRemoteClient (WebSocket 反控客户端)
 │
 ├── scripts/
 │   ├── build.ps1

@@ -183,6 +183,8 @@ EncodingConfig.applyConfig()
 | `usePipeline` | 3 秒 | `invoke('get_pipeline_status')` |
 | `useSources` | 5 秒 | `invoke('list_sources')` |
 | `useRemoteControl` | 5 秒 | `invoke('get_remote_status')` |
+| `useRtspClient` | 3 秒 | `invoke('rtsp_client_status')` |
+| `useWsRemote` | 3 秒 | `invoke('ws_remote_status')` |
 
 加上 Tauri 事件驱动的即时更新：
 - `source-added` / `source-removed` 事件 → 立即触发 `useSources.refresh()` + `fetchThumbnails()`
@@ -277,3 +279,133 @@ EnumDisplayMonitors            enumerate_monitors()
 ```
 
 > **⚠️ 关键教训**: 新增 `CaptureSource.handle` 字段后，必须审计所有构造/消费该结构体的 Tauri 命令和前端 invoke 调用，确保字段不被遗漏。详见 `.feature/solutions/integration-issues/cross-layer-field-omission-tauri-commands-2026-05-08.md`。
+
+## 9 RTSP 客户端连接时序
+
+```
+用户                     前端                          Tauri IPC                    Rust 后端
+ │                        │                              │                            │
+ │  点击"连接"             │                              │                            │
+ │───────────────────────→│                              │                            │
+ │                        │                              │                            │
+ │                        │ useRtspClient.connect(       │                            │
+ │                        │   name, url, protocol,       │                            │
+ │                        │   username, password)        │                            │
+ │                        │                              │                            │
+ │                        │ invoke('rtsp_client_connect',{│                            │
+ │                        │   name, url, protocol,       │                            │
+ │                        │   username, password         │                            │
+ │                        │ })                           │                            │
+ │                        │─────────────────────────────→│                            │
+ │                        │                              │ rtsp_client_connect()       │
+ │                        │                              │───────────────────────────→│
+ │                        │                              │                            │
+ │                        │                              │                 spawn_blocking ──→│
+ │                        │                              │                            │
+ │                        │                              │           ┌──── RtspClientManager ────┐
+ │                        │                              │           │ 1. parse::launch(         │
+ │                        │                              │           │    rtspsrc name=src       │
+ │                        │                              │           │    decodebin name=decoder │
+ │                        │                              │           │    videoconvert name=vconv│
+ │                        │                              │           │    jpegenc quality=60     │
+ │                        │                              │           │    appsink name=sink)     │
+ │                        │                              │           │                            │
+ │                        │                              │           │ 2. set_property:           │
+ │                        │                              │           │    src.location = url      │
+ │                        │                              │           │    src.user-id = username  │
+ │                        │                              │           │    src.user-pw = password  │
+ │                        │                              │           │                            │
+ │                        │                              │           │ 3. pad-added callback:      │
+ │                        │                              │           │    decoder → vconv 链接    │
+ │                        │                              │           │    从 caps 提取分辨率       │
+ │                        │                              │           │                            │
+ │                        │                              │           │ 4. appsink new-sample:      │
+ │                        │                              │           │    → mpsc::Sender 发送帧   │
+ │                        │                              │           │                            │
+ │                        │                              │           │ 5. pipeline.play()          │
+ │                        │                              │           └────────────────────────────┘
+ │                        │                              │                            │
+ │                        │                              │                 register_mjpeg()
+ │                        │                              │                 mjpeg_server.add_source(
+ │                        │                              │                   "rtsp-client-xxx", rx)
+ │                        │                              │                            │
+ │                        │  Result(stream_id)           │                            │
+ │                        │←─────────────────────────────│←───────────────────────────│
+ │                        │                              │                            │
+ │                        │ refreshStatus()              │                            │
+ │                        │ invoke('rtsp_client_status') │                            │
+ │                        │─────────────────────────────→│                            │
+ │                        │  RtspClientStatus[]          │                            │
+ │                        │←─────────────────────────────│                            │
+ │                        │                              │                            │
+ │                        │ 更新 streams Map             │                            │
+ │                        │ RtspPreview: <img :src=      │                            │
+ │                        │   "http://127.0.0.1:8090/    │                            │
+ │                        │    rtsp-client-xxx">          │                            │
+ │                        │                              │                            │
+ │  MJPEG 预览显示         │                              │                            │
+ │←───────────────────────│                              │                            │
+```
+
+## 10 反控命令时序（客户端模式）
+
+```
+前端 (RtspPreview)           Tauri IPC                   WsRemoteClient              远端 WS Server
+  │                            │                            │                            │
+  │ 鼠标移动 (relX=0.5, relY=0.3)                            │                            │
+  │ wsRemote.sendMouseMove(    │                            │                            │
+  │   streamId, 0.5, 0.3)     │                            │                            │
+  │                            │                            │                            │
+  │ invoke('ws_remote_send_command', {                      │                            │
+  │   command: {               │                            │                            │
+  │     type: 'mouse_move',    │                            │                            │
+  │     stream_id: 'rtsp-xxx', │                            │                            │
+  │     data: {rel_x:0.5,      │                            │                            │
+  │             rel_y:0.3}     │                            │                            │
+  │   }                        │                            │                            │
+  │ })                         │                            │                            │
+  │───────────────────────────→│                            │                            │
+  │                            │ ws_remote_send_command()   │                            │
+  │                            │──────────────────────────→│                            │
+  │                            │                            │ convert_command():         │
+  │                            │                            │ rel→abs:                   │
+  │                            │                            │ x = 0.5 * width = 960      │
+  │                            │                            │ y = 0.3 * height = 324     │
+  │                            │                            │                            │
+  │                            │                            │ RemoteCommand::MouseMove   │
+  │                            │                            │ ws_tx.send(JSON) ─────────→│
+  │                            │                            │                            │ injector.execute()
+  │                            │                            │←── {"status":"ok"} ──────│
+  │                            │←── Ok(()) ───────────────│                            │
+  │←── Result(()) ────────────│                            │                            │
+```
+
+## 11 分辨率同步数据流
+
+```
+RTSP Client Pipeline                Tauri IPC                     WS Remote Client
+       │                                │                              │
+       │ pad-added callback:            │                              │
+       │ 从 caps 提取 width, height     │                              │
+       │ 存入 RtspClientHandle.resolution                              │
+       │                                │                              │
+       │ rtsp_client_status 响应包含     │                              │
+       │ resolution: [1920, 1080]       │                              │
+       │───────────────────────────────→│                              │
+       │                                │                              │
+       │                        前端 watch(streams)                    │
+       │                        检测到 state=Connected               │
+       │                        且 resolution 存在                   │
+       │                                │                              │
+       │                        invoke('ws_remote_set_resolution', { │
+       │                          width: 1920, height: 1080          │
+       │                        })                                     │
+       │                                │──────────────────────────────→│
+       │                                │                              │ set_remote_resolution()
+       │                                │                              │ remote_resolution = (1920,1080)
+       │                                │                              │
+       │                                │                              │ 后续 send_command() 可用
+       │                                │                              │ 坐标映射: rel→abs
+```
+
+> **⚠️ 关键教训**: `WsRemoteClient.remote_resolution` 是坐标映射的必要前提。如果不设置，所有鼠标/拖拽命令都会返回 "Remote resolution not available" 错误。详见 `.feature/solutions/build-issues/gstreamer-element-factory-panic-remote-resolution-2026-05-09.md`。

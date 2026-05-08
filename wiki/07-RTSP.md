@@ -1,11 +1,12 @@
-# 07 — RTSP 服务模块
+# 07 — RTSP 模块
 
 ## 1 模块结构
 
 ```
 rtsp/
-├── mod.rs      → pub mod server; pub use server::RtspServer;
-└── server.rs   → RtspServer (内含独立 GLib MainContext + MainLoop 线程)
+├── mod.rs      → pub mod server; pub mod client; pub use server::RtspServer; pub use client::RtspClientManager;
+├── server.rs   → RtspServer (内含独立 GLib MainContext + MainLoop 线程)
+└── client.rs   → RtspClientManager (RTSP 拉流客户端 + MJPEG 转发)
 ```
 
 ## 2 GLib MainContext 管理
@@ -179,3 +180,126 @@ stop_pipeline
 | 延迟 | `0` | `factory.set_latency(0)` |
 | 绑定地址 | `127.0.0.1` | `rtsp_url()` 方法硬编码 |
 | Channel 轮询间隔 | `100ms` | GLib timeout source |
+
+---
+
+## 6 RTSP 客户端 (`client.rs`)
+
+### 6.1 概述
+
+RTSP 客户端模式允许应用作为监控客户端，连接远端 RTSP 流并实时预览。使用 GStreamer `rtspsrc` 拉流，通过 `decodebin` + `jpegenc` + `appsink` 输出 JPEG 帧，复用 MJPEG Server 推送到 HTTP 端点供前端 `<img>` 标签消费。
+
+### 6.2 数据结构
+
+```rust
+pub enum RtspClientState {
+    Connecting,
+    Connected,
+    Reconnecting { attempt: u32, max_attempts: u32 },
+    Disconnected,
+    Error(String),
+    Offline,
+}
+
+pub struct RtspClientStatus {
+    pub stream_id: String,        // "rtsp-client-{hex_timestamp}"
+    pub name: String,
+    pub url: String,              // RTSP URL
+    pub state: RtspClientState,
+    pub resolution: Option<(u32, u32)>,
+    pub fps: f64,
+    pub latency_ms: u32,
+    pub protocol: String,         // "tcp" | "udp"
+}
+
+struct RtspClientHandle {
+    pipeline: gstreamer::Pipeline,
+    state: Arc<Mutex<RtspClientState>>,
+    name: String,
+    url: String,
+    protocol: String,
+    resolution: Arc<Mutex<Option<(u32, u32)>>>,
+    frame_count: Arc<AtomicU64>,
+    started_at: Instant,
+    bus_watch_id: gstreamer::bus::BusWatchGuard,
+}
+
+pub struct RtspClientManager {
+    clients: Mutex<HashMap<String, RtspClientHandle>>,
+    mjpeg_server: Arc<AsyncMutex<Option<MjpegServer>>>,
+    preview_http_port: u16,
+}
+```
+
+### 6.3 Pipeline 创建 (`create_pipeline`)
+
+使用 `parse::launch()` 创建 pipeline（避免 `ElementFactory::make().build()` panic）：
+
+```rust
+let launch_str = format!(
+    "rtspsrc name=src protocols={} latency=0 ! \
+     decodebin name=decoder ! \
+     videoconvert name=vconv ! \
+     jpegenc name=jenc quality=60 ! \
+     appsink name=sink emit-signals=true max-buffers=1 drop=true",
+    protocols_val
+);
+let pipeline = gstreamer::parse::launch(&launch_str)?;
+```
+
+**关键设计**:
+- 所有元素显式命名（`name=src`, `name=vconv`），避免自动命名不可靠
+- `rtspsrc` 动态属性（`location`, `user-id`, `user-pw`）通过 `set_property()` 在创建后设置
+- `decodebin` 的 `pad-added` 信号回调中链接到 `videoconvert`
+- 从 caps 中提取分辨率（`width`/`height`）存入 `RtspClientHandle.resolution`
+
+### 6.4 分辨率检测
+
+通过 GStreamer `pad-added` 信号从 caps 中提取远端分辨率：
+
+```rust
+decodebin.connect("pad-added", false, move |_args| {
+    let pad = args[1].get::<gstreamer::Pad>().unwrap();
+    let caps = pad.current_caps().unwrap();
+    let s = caps.structure(0).unwrap();
+    if let Ok(width) = s.get::<i32>("width") {
+        if let Ok(height) = s.get::<i32>("height") {
+            *resolution_clone.lock().unwrap() = Some((width as u32, height as u32));
+        }
+    }
+    None
+})
+```
+
+### 6.5 MJPEG 转发
+
+`create_pipeline()` 返回 `mpsc::Receiver<Vec<u8>>`，调用方在 async 上下文中注册到 MJPEG Server：
+
+```rust
+let (stream_id, rx) = tokio::task::spawn_blocking(move || {
+    manager.create_pipeline(name, url, protocol, username, password)
+}).await??;
+
+manager_for_mjpeg.register_mjpeg(&stream_id, rx).await?;
+```
+
+前端通过 `http://127.0.0.1:{port}/{stream_id}` 消费 MJPEG 流。
+
+### 6.6 自动重连
+
+RTSP 流断开后指数退避重连：
+- 初始 2s，翻倍至最大 30s
+- 3 次失败后标记为 `Offline`
+- Bus watch 检测 `ErrorMessage` → 启动重连
+
+### 6.7 默认配置
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| JPEG quality | `60` | `jpegenc quality=60` |
+| appsink max-buffers | `1` | 仅保留最新帧 |
+| appsink drop | `true` | 丢弃旧帧 |
+| rtspsrc latency | `0` | 最小延迟 |
+| stream_id 格式 | `rtsp-client-{hex}` | 8 位十六进制时间戳 |
+| 重连初始间隔 | `2s` | 指数退避 |
+| 最大重连次数 | `3` | 之后标记 Offline |
