@@ -126,22 +126,36 @@ Phase 8 cross-platform: macOS/Linux conditional compilation for capture/encode, 
 
 ### Summary
 
-为 Screencast Pro 添加 RTSP 客户端模式：支持连接远端 RTSP 流实时预览（rtspsrc+decodebin+jpegenc+appsink→MJPEG），通过 WebSocket 反控远端设备（鼠标/键盘/坐标映射）。包含 8 个 Tauri 命令、4 个 Vue 组件、2 个 composable。修复 GStreamer ElementFactory panic（改用 parse::launch）和反控分辨率同步问题。
+Add RTSP client mode: connect to remote RTSP streams for live preview (rtspsrc+decodebin+jpegenc+appsink->MJPEG), remote control via WebSocket (mouse/keyboard/coordinate mapping). 8 Tauri commands, 4 Vue components, 2 composables. Fix GStreamer ElementFactory panic (use parse::launch) and remote resolution sync.
 
 ### Main Changes
 
-(Add details)
+- **Backend**: Add `RtspClientManager` (rtspsrc+decodebin+jpegenc+appsink pipeline with pad-added caps resolution detection)
+- **Backend**: Add `WsRemoteClient` (tokio-tungstenite connect + auth + send_command with relative->absolute coordinate mapping)
+- **Backend**: Add 8 Tauri commands: rtsp_client_connect/disconnect/status, ws_remote_connect/disconnect/send_command/status/set_resolution
+- **Frontend**: Add 4 Vue components: RtspStreamList, RtspPreview, RemoteControlClient, VirtualKeyboard
+- **Frontend**: Add 2 composables: useRtspClient, useWsRemote
+- **Frontend**: App.vue mode switching (server/client tabs), TopBar.vue mode tabs UI
+- **Fix**: GStreamer `ElementFactory::make().build()` panic -> use `parse::launch()` + explicit element naming
+- **Fix**: `remote_resolution` never set -> add `ws_remote_set_resolution` command + auto-sync watch
+- **Fix**: `any` type in RtspStreamList.vue -> `RtspClientState`
+- **Spec**: Add forbidden pattern `ElementFactory::make().build()` to quality-guidelines.md
+- **Doc**: Add solution doc for GStreamer panic + resolution sync bugs
 
 ### Git Commits
 
 | Hash | Message |
 |------|---------|
-| `f3a8683` | (see git log) |
-| `b80d237` | (see git log) |
+| `f3a8683` | feat(rtsp-client): add RTSP client mode with remote control support |
+| `b80d237` | chore(task): archive 05-08-rtsp-client |
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `vue-tsc --noEmit`: 0 errors
+- [OK] `cargo check`: passed (6 pre-existing warnings)
+- [OK] `cargo test --lib`: 85 passed, 0 failed, 6 ignored
+- [OK] No `console.log`, no non-null assertions, no `any` types
+- [P] Manual integration test pending (requires real RTSP stream + WebSocket remote)
 
 ### Status
 
