@@ -117,3 +117,36 @@ Phase 8 cross-platform: macOS/Linux conditional compilation for capture/encode, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: RTSP Client Mode with Remote Control
+
+**Date**: 2026-05-09
+**Task**: RTSP Client Mode with Remote Control
+
+### Summary
+
+为 Screencast Pro 添加 RTSP 客户端模式：支持连接远端 RTSP 流实时预览（rtspsrc+decodebin+jpegenc+appsink→MJPEG），通过 WebSocket 反控远端设备（鼠标/键盘/坐标映射）。包含 8 个 Tauri 命令、4 个 Vue 组件、2 个 composable。修复 GStreamer ElementFactory panic（改用 parse::launch）和反控分辨率同步问题。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f3a8683` | (see git log) |
+| `b80d237` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
