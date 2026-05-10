@@ -89,38 +89,23 @@ impl GstPipelineManager {
 
         log::info!("start_preview: source_type={}, framerate={}, pos=({},{}) size={}x{}", source_type, framerate, source_x, source_y, source_w, source_h);
 
-        // For windows: try WGC first, fall back to DXGI+crop if play() fails
         let mut pp = if source_type == "Window" {
-            // Try WGC mode first
-            let wgc_pp = PreviewPipeline::new(source_id, &source_type, framerate, frame_count.clone(), source_x, source_y, source_w, source_h, source_handle);
-            match wgc_pp {
-                Ok(pipeline) => {
-                    // WGC pipeline created, try playing
-                    match pipeline.play() {
-                        Ok(()) => {
-                            log::info!("WGC preview started successfully for {}", source_id);
-                            pipeline
-                        }
-                        Err(e) => {
-                            log::warn!("WGC preview play failed for {}: {}, trying DXGI+crop fallback", source_id, e);
-                            // WGC play failed, drop this pipeline and create DXGI+crop fallback
-                            drop(pipeline);
-                            let fallback_pp = PreviewPipeline::new_dxgi_crop_fallback(
-                                source_id, framerate, frame_count.clone(), source_x, source_y, source_w, source_h, source_handle
-                            )?;
-                            fallback_pp.play()?;
-                            log::info!("DXGI+crop fallback preview started for {}", source_id);
-                            fallback_pp
-                        }
-                    }
+            // Try WGC first — it captures only the target window content,
+            // so overlapping windows are NOT shown. If WGC play fails
+            // (e.g., PixPin overlay, UWP apps), fall back to DXGI+crop.
+            let wgc_pp = PreviewPipeline::new(source_id, &source_type, framerate, frame_count.clone(), source_x, source_y, source_w, source_h, source_handle)?;
+            match wgc_pp.play() {
+                Ok(()) => {
+                    log::info!("WGC preview started for window {}", source_id);
+                    wgc_pp
                 }
                 Err(e) => {
-                    log::warn!("WGC preview creation failed for {}: {}, trying DXGI+crop fallback", source_id, e);
+                    log::warn!("WGC play failed for window {}: {}, falling back to DXGI+crop", source_id, e);
                     let fallback_pp = PreviewPipeline::new_dxgi_crop_fallback(
                         source_id, framerate, frame_count.clone(), source_x, source_y, source_w, source_h, source_handle
                     )?;
                     fallback_pp.play()?;
-                    log::info!("DXGI+crop fallback preview started for {}", source_id);
+                    log::info!("DXGI+crop fallback preview started for window {}", source_id);
                     fallback_pp
                 }
             }
@@ -378,14 +363,6 @@ impl PipelineManager for GstPipelineManager {
         };
         let _ = self.stop_pipeline(source_id);
         self.start_pipeline(&source, config)
-    }
-
-    fn get_rtsp_url(&self, source_id: &str) -> Option<String> {
-        let rtsp_path = {
-            let pipelines = self.pipelines.lock().unwrap();
-            pipelines.get(source_id).map(|h| h.rtsp_path.clone())?
-        };
-        self.get_rtsp_url_by_path(&rtsp_path)
     }
 }
 

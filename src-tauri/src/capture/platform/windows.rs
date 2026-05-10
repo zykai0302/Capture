@@ -6,8 +6,9 @@ use windows::Win32::Graphics::Gdi::{
     HMONITOR, HDC,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowTextW, IsWindowVisible, GWLP_HWNDPARENT,
-    GetWindowLongPtrW,
+    EnumWindows, GetWindowRect, GetWindowTextW, IsWindowVisible, IsIconic,
+    GetWindowPlacement, WINDOWPLACEMENT, GWLP_HWNDPARENT,
+    GetWindowLongPtrW, GWL_EXSTYLE,
 };
 
 pub fn enumerate_sources() -> AppResult<CaptureSourceList> {
@@ -90,7 +91,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     unsafe {
         // Skip invisible windows
         if !IsWindowVisible(hwnd).as_bool() {
-            return BOOL(1); // Continue
+            return BOOL(1);
         }
 
         // Skip windows with no title
@@ -107,16 +108,37 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
             return BOOL(1);
         }
 
-        // Skip system windows
+        // Skip system windows by title
         if title == "Program Manager" || title == "Windows Input Experience" {
             return BOOL(1);
         }
 
-        // Get window rect
-        let mut rect = RECT::default();
-        let _ = GetWindowRect(hwnd, &mut rect);
-        let width = (rect.right - rect.left).max(0) as u32;
-        let height = (rect.bottom - rect.top).max(0) as u32;
+        // Skip NOREDIRECTIONBITMAP (UWP background windows like Microsoft Store,
+        // Microsoft Text Input Application) — they have no visible surface.
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        if ex_style & 0x00200000 != 0 {
+            return BOOL(1);
+        }
+
+        // Get window rect — for minimized windows, use normal (restored) position
+        // via GetWindowPlacement, since GetWindowRect returns the taskbar icon area.
+        let (x, y, width, height) = if IsIconic(hwnd).as_bool() {
+            let mut wp = WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..std::mem::zeroed()
+            };
+            let _ = GetWindowPlacement(hwnd, &mut wp);
+            let r = wp.rcNormalPosition;
+            let w = (r.right - r.left).max(0) as u32;
+            let h = (r.bottom - r.top).max(0) as u32;
+            (r.left, r.top, w, h)
+        } else {
+            let mut rect = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rect);
+            let w = (rect.right - rect.left).max(0) as u32;
+            let h = (rect.bottom - rect.top).max(0) as u32;
+            (rect.left, rect.top, w, h)
+        };
 
         // Skip very small windows
         if width < 50 || height < 50 {
@@ -129,8 +151,8 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
             source_type: SourceType::Window,
             width,
             height,
-            x: rect.left,
-            y: rect.top,
+            x,
+            y,
             is_streaming: false,
             rtsp_url: None,
             handle: hwnd.0 as u64,

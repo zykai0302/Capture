@@ -37,7 +37,6 @@ pub trait PipelineManager: Send + Sync {
     fn get_status(&self, source_id: &str) -> Option<PipelineStatus>;
     fn get_all_status(&self) -> Vec<PipelineStatus>;
     fn update_config(&self, source_id: &str, config: &EncodeConfig) -> AppResult<()>;
-    fn get_rtsp_url(&self, source_id: &str) -> Option<String>;
 }
 
 #[allow(unused_imports)]

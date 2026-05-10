@@ -1,11 +1,12 @@
 use crate::encode::config::{Codec, EncodeConfig, EncodeMode};
 use crate::capture::source::{CaptureSource, SourceType};
-use gstreamer::prelude::*;
 
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 #[cfg(target_os = "windows")]
-use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MONITORENUMPROC, MONITORINFOEXW, HMONITOR, HDC};
+use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MONITORINFOEXW, HMONITOR, HDC};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic, GetWindowPlacement, WINDOWPLACEMENT};
 
 /// Build a GStreamer launch string for screen capture + encode + RTP pay
 /// Returns a complete pipeline string for gst-rtsp-server
@@ -59,136 +60,74 @@ pub fn validate_pipeline_launch(launch_str: &str) -> Result<(), String> {
     }
 }
 
-/// Build a DXGI+crop fallback pipeline for window capture.
-/// Used when WGC mode fails for a specific window.
-pub fn build_dxgi_crop_launch_string(source: &CaptureSource, config: &EncodeConfig) -> String {
-    let encoder_and_pay = build_encoder_element(config);
-    let capture_element = build_dxgi_crop_capture_element(source);
-
-    let uses_d3d11 = capture_element.starts_with("d3d11screencapturesrc");
-    let uses_d3d12 = capture_element.starts_with("d3d12screencapturesrc");
-
-    let pipeline = if uses_d3d11 {
-        format!(
-            "( {} ! d3d11colorconvert ! d3d11download ! {} name=pay0 pt=96 )",
-            capture_element, encoder_and_pay
-        )
-    } else if uses_d3d12 {
-        format!(
-            "( {} ! d3d12colorconvert ! d3d12download ! {} name=pay0 pt=96 )",
-            capture_element, encoder_and_pay
-        )
-    } else {
-        format!(
-            "( {} ! videoconvert ! {} name=pay0 pt=96 )",
-            capture_element, encoder_and_pay
-        )
-    };
-
-    log::info!("Built DXGI+crop fallback RTSP pipeline: {}", pipeline);
-    pipeline
-}
-
-/// Build DXGI+crop capture element for window (no WGC, used as fallback)
-fn build_dxgi_crop_capture_element(source: &CaptureSource) -> String {
-    #[cfg(target_os = "windows")]
-    {
-        let (monitor_index, mon_x, mon_y) = get_monitor_info_for_window(source.x, source.y);
-        let crop_x = (source.x - mon_x).max(0) as u32;
-        let crop_y = (source.y - mon_y).max(0) as u32;
-
-        // Use monitor-handle if available to avoid index mapping issues
-        if source.handle != 0 {
-            if gstreamer::ElementFactory::find("d3d11screencapturesrc").is_some() {
-                format!(
-                    "d3d11screencapturesrc monitor-handle={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    source.handle, crop_x, crop_y, source.width, source.height
-                )
-            } else if gstreamer::ElementFactory::find("d3d12screencapturesrc").is_some() {
-                format!(
-                    "d3d12screencapturesrc monitor-handle={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    source.handle, crop_x, crop_y, source.width, source.height
-                )
-            } else {
-                format!(
-                    "d3d11screencapturesrc monitor-handle={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    source.handle, crop_x, crop_y, source.width, source.height
-                )
-            }
-        } else {
-            if gstreamer::ElementFactory::find("d3d11screencapturesrc").is_some() {
-                format!(
-                    "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_index, crop_x, crop_y, source.width, source.height
-                )
-            } else if gstreamer::ElementFactory::find("d3d12screencapturesrc").is_some() {
-                format!(
-                    "d3d12screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_index, crop_x, crop_y, source.width, source.height
-                )
-            } else {
-                format!(
-                    "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_index, crop_x, crop_y, source.width, source.height
-                )
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        "d3d11screencapturesrc".to_string()
-    }
-}
-
 /// Build DXGI+crop capture string for preview pipeline (fallback when WGC fails)
-pub fn build_dxgi_crop_preview_capture_string(_source_id: &str, source_x: i32, source_y: i32, source_w: u32, source_h: u32, monitor_handle: u64) -> String {
+/// Queries live window rect via HWND instead of using stale source coordinates,
+/// matching the behavior of build_capture_element's Window variant.
+pub fn build_dxgi_crop_preview_capture_string(source_id: &str, _source_x: i32, _source_y: i32, _source_w: u32, _source_h: u32, _source_handle: u64) -> String {
     #[cfg(target_os = "windows")]
     {
-        let (monitor_index, mon_x, mon_y) = get_monitor_info_for_window(source_x, source_y);
-        let crop_x = (source_x - mon_x).max(0) as u32;
-        let crop_y = (source_y - mon_y).max(0) as u32;
+        // Extract HWND from source_id and query live window rect
+        let hwnd: u64 = source_id
+            .strip_prefix("window-")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
 
-        // Use monitor-handle if available to avoid index mapping issues
-        if monitor_handle != 0 {
-            if gstreamer::ElementFactory::find("d3d11screencapturesrc").is_some() {
-                format!(
-                    "d3d11screencapturesrc monitor-handle={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_handle, crop_x, crop_y, source_w, source_h
-                )
-            } else if gstreamer::ElementFactory::find("d3d12screencapturesrc").is_some() {
-                format!(
-                    "d3d12screencapturesrc monitor-handle={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_handle, crop_x, crop_y, source_w, source_h
-                )
+        let (win_x, win_y, win_w, win_h) = unsafe {
+            let hwnd_ptr = HWND(hwnd as *mut _);
+            if IsIconic(hwnd_ptr).as_bool() {
+                let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
+                wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+                let _ = GetWindowPlacement(hwnd_ptr, &mut wp);
+                let r = wp.rcNormalPosition;
+                let w = (r.right - r.left).max(0) as u32;
+                let h = (r.bottom - r.top).max(0) as u32;
+                (r.left, r.top, w, h)
             } else {
-                format!(
-                    "d3d11screencapturesrc monitor-handle={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_handle, crop_x, crop_y, source_w, source_h
-                )
+                let mut rect = std::mem::zeroed();
+                let _ = GetWindowRect(hwnd_ptr, &mut rect);
+                let w = (rect.right - rect.left).max(0) as u32;
+                let h = (rect.bottom - rect.top).max(0) as u32;
+                if w > 0 && h > 0 {
+                    (rect.left, rect.top, w, h)
+                } else {
+                    (_source_x, _source_y, _source_w, _source_h)
+                }
             }
+        };
+
+        let (monitor_index, mon_x, mon_y) = get_monitor_info_for_window(win_x, win_y);
+        let crop_x = (win_x - mon_x).max(0) as u32;
+        let crop_y = (win_y - mon_y).max(0) as u32;
+
+        if gstreamer::ElementFactory::find("d3d11screencapturesrc").is_some() {
+            log::info!(
+                "DXGI+crop preview: hwnd={} monitor={} origin=({},{}) win=({},{}) crop=({},{}: {}x{})",
+                hwnd, monitor_index, mon_x, mon_y, win_x, win_y, crop_x, crop_y, win_w, win_h
+            );
+            format!(
+                "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
+                monitor_index, crop_x, crop_y, win_w, win_h
+            )
+        } else if gstreamer::ElementFactory::find("d3d12screencapturesrc").is_some() {
+            log::info!(
+                "DXGI+crop preview (d3d12): hwnd={} monitor={} origin=({},{}) win=({},{}) crop=({},{}: {}x{})",
+                hwnd, monitor_index, mon_x, mon_y, win_x, win_y, crop_x, crop_y, win_w, win_h
+            );
+            format!(
+                "d3d12screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
+                monitor_index, crop_x, crop_y, win_w, win_h
+            )
         } else {
-            if gstreamer::ElementFactory::find("d3d11screencapturesrc").is_some() {
-                format!(
-                    "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_index, crop_x, crop_y, source_w, source_h
-                )
-            } else if gstreamer::ElementFactory::find("d3d12screencapturesrc").is_some() {
-                format!(
-                    "d3d12screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_index, crop_x, crop_y, source_w, source_h
-                )
-            } else {
-                format!(
-                    "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                    monitor_index, crop_x, crop_y, source_w, source_h
-                )
-            }
+            format!(
+                "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
+                monitor_index, crop_x, crop_y, win_w, win_h
+            )
         }
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = source_id;
         "d3d11screencapturesrc".to_string()
     }
 }
@@ -233,7 +172,7 @@ fn build_capture_element(source: &CaptureSource) -> String {
                 }
             }
             SourceType::Window => {
-                // For window RTSP streaming, use DXGI+crop mode (reliable for all windows).
+                // For window RTSP streaming, use DXGI+crop mode.
                 // WGC may fail at PLAYING time for some windows (PixPin, UWP, etc.),
                 // and since RTSP pipelines are lazily started on client connection,
                 // we cannot detect WGC failures early. DXGI+crop is the safe choice.
@@ -243,33 +182,59 @@ fn build_capture_element(source: &CaptureSource) -> String {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
 
-                let (monitor_index, mon_x, mon_y) = get_monitor_info_for_window(source.x, source.y);
-                let crop_x = (source.x - mon_x).max(0) as u32;
-                let crop_y = (source.y - mon_y).max(0) as u32;
+                // Query live window rect. For minimized windows, GetWindowRect
+                // returns the taskbar icon area (-32000,-32000, 160x28), so
+                // use GetWindowPlacement to get the restored position instead.
+                let (win_x, win_y, win_w, win_h) = unsafe {
+                    let hwnd_ptr = HWND(hwnd as *mut _);
+                    if IsIconic(hwnd_ptr).as_bool() {
+                        let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
+                        wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+                        let _ = GetWindowPlacement(hwnd_ptr, &mut wp);
+                        let r = wp.rcNormalPosition;
+                        let w = (r.right - r.left).max(0) as u32;
+                        let h = (r.bottom - r.top).max(0) as u32;
+                        (r.left, r.top, w, h)
+                    } else {
+                        let mut rect = std::mem::zeroed();
+                        let _ = GetWindowRect(hwnd_ptr, &mut rect);
+                        let w = (rect.right - rect.left).max(0) as u32;
+                        let h = (rect.bottom - rect.top).max(0) as u32;
+                        if w > 0 && h > 0 {
+                            (rect.left, rect.top, w, h)
+                        } else {
+                            (source.x, source.y, source.width, source.height)
+                        }
+                    }
+                };
+
+                let (monitor_index, mon_x, mon_y) = get_monitor_info_for_window(win_x, win_y);
+                let crop_x = (win_x - mon_x).max(0) as u32;
+                let crop_y = (win_y - mon_y).max(0) as u32;
 
                 if gstreamer::ElementFactory::find("d3d11screencapturesrc").is_some() {
                     log::info!(
                         "Using d3d11screencapturesrc DXGI+crop for window hwnd={} monitor={} origin=({},{}) win=({},{}) crop=({},{}: {}x{})",
-                        hwnd, monitor_index, mon_x, mon_y, source.x, source.y, crop_x, crop_y, source.width, source.height
+                        hwnd, monitor_index, mon_x, mon_y, win_x, win_y, crop_x, crop_y, win_w, win_h
                     );
                     format!(
                         "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                        monitor_index, crop_x, crop_y, source.width, source.height
+                        monitor_index, crop_x, crop_y, win_w, win_h
                     )
                 } else if gstreamer::ElementFactory::find("d3d12screencapturesrc").is_some() {
                     log::info!(
                         "Using d3d12screencapturesrc DXGI+crop for window hwnd={} monitor={} origin=({},{}) win=({},{}) crop=({},{}: {}x{})",
-                        hwnd, monitor_index, mon_x, mon_y, source.x, source.y, crop_x, crop_y, source.width, source.height
+                        hwnd, monitor_index, mon_x, mon_y, win_x, win_y, crop_x, crop_y, win_w, win_h
                     );
                     format!(
                         "d3d12screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                        monitor_index, crop_x, crop_y, source.width, source.height
+                        monitor_index, crop_x, crop_y, win_w, win_h
                     )
                 } else {
                     log::warn!("No hardware window capture source found, trying d3d11screencapturesrc anyway");
                     format!(
                         "d3d11screencapturesrc monitor-index={} crop-x={} crop-y={} crop-width={} crop-height={}",
-                        monitor_index, crop_x, crop_y, source.width, source.height
+                        monitor_index, crop_x, crop_y, win_w, win_h
                     )
                 }
             }
@@ -299,13 +264,10 @@ fn build_capture_element(source: &CaptureSource) -> String {
 /// not absolute screen coordinates.
 /// Returns (monitor_index, monitor_origin_x, monitor_origin_y).
 pub fn get_monitor_info_for_window(x: i32, y: i32) -> (i32, i32, i32) {
-    // Enumerate monitors and find which one contains the window position.
-    // IMPORTANT: The monitor-index for d3d11screencapturesrc is derived from
-    // the Windows display device name (e.g., \\.\DISPLAY1 → index 0, \\.\DISPLAY2 → index 1),
-    // NOT from the enumeration order of EnumDisplayMonitors.
     #[cfg(target_os = "windows")]
     {
-        let result = std::sync::Mutex::new(Vec::<(i32, i32, i32, i32, i32)>::new()); // (display_index, left, top, right, bottom)
+        // Collect monitors as (device_name, left, top, right, bottom)
+        let result = std::sync::Mutex::new(Vec::<(String, i32, i32, i32, i32)>::new());
         let _ = unsafe {
             EnumDisplayMonitors(
                 None,
@@ -316,20 +278,30 @@ pub fn get_monitor_info_for_window(x: i32, y: i32) -> (i32, i32, i32) {
         };
 
         let monitors = result.lock().unwrap().clone();
-        for &(display_index, left, top, right, bottom) in monitors.iter() {
-            if x >= left && x < right && y >= top && y < bottom {
-                return (display_index, left, top);
+
+        // d3d11screencapturesrc monitor-index follows DXGI output enumeration order:
+        // primary monitor (origin 0,0) = index 0, then remaining monitors sorted by (left, top).
+        let mut sorted: Vec<_> = monitors.iter().collect();
+        sorted.sort_by(|a, b| {
+            let a_primary = a.1 == 0 && a.2 == 0;
+            let b_primary = b.1 == 0 && b.2 == 0;
+            b_primary.cmp(&a_primary) // primary=true sorts first
+                .then(a.1.cmp(&b.1)) // then by left
+                .then(a.2.cmp(&b.2)) // then by top
+        });
+
+        for (idx, m) in sorted.iter().enumerate() {
+            if x >= m.1 && x < m.3 && y >= m.2 && y < m.4 {
+                log::info!("get_monitor_info_for_window: point ({},{}) matched monitor_index={} origin=({},{})", x, y, idx, m.1, m.2);
+                return (idx as i32, m.1, m.2);
             }
         }
+
+        log::warn!("get_monitor_info_for_window: no monitor matched point ({},{}), fallback to (0,0,0)", x, y);
     }
 
     // Fallback: assume primary monitor (index 0, origin 0,0)
     (0, 0, 0)
-}
-
-/// Backward-compatible wrapper that returns only the monitor index.
-pub fn get_monitor_index_for_window(x: i32, y: i32) -> i32 {
-    get_monitor_info_for_window(x, y).0
 }
 
 #[cfg(target_os = "windows")]
@@ -339,7 +311,7 @@ unsafe extern "system" fn monitor_enum_for_index(
     _lprc_clip: *mut RECT,
     lparam: LPARAM,
 ) -> BOOL {
-    let data = &*(lparam.0 as *const std::sync::Mutex<Vec<(i32, i32, i32, i32, i32)>>);
+    let data = &*(lparam.0 as *const std::sync::Mutex<Vec<(String, i32, i32, i32, i32)>>);
     let mut guard = data.lock().unwrap();
 
     let mut monitor_info: MONITORINFOEXW = std::mem::zeroed();
@@ -349,17 +321,12 @@ unsafe extern "system" fn monitor_enum_for_index(
     if result.as_bool() {
         let rect = monitor_info.monitorInfo.rcMonitor;
 
-        // Extract the true display index from device name (\\.\DISPLAY1 → 0, \\.\DISPLAY2 → 1)
-        // This matches how d3d11screencapturesrc interprets monitor-index.
         let null_pos = monitor_info.szDevice.iter().position(|&c| c == 0).unwrap_or(32);
         let device_name = String::from_utf16_lossy(&monitor_info.szDevice[..null_pos]);
-        let display_index = device_name
-            .trim_start_matches(r"\\.\DISPLAY")
-            .parse::<i32>()
-            .unwrap_or(1)
-            - 1;
 
-        guard.push((display_index, rect.left, rect.top, rect.right, rect.bottom));
+        log::info!("monitor_enum: device={} rect=({},{},{},{})", device_name, rect.left, rect.top, rect.right, rect.bottom);
+
+        guard.push((device_name, rect.left, rect.top, rect.right, rect.bottom));
     }
 
     BOOL(1)
