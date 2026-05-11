@@ -53,6 +53,19 @@ export function useRtspClient() {
     }
   }
 
+  async function disconnectAll() {
+    try {
+      loading.value = true
+      error.value = null
+      await invokeWithTimeout('rtsp_client_disconnect_all', undefined)
+      await refreshStatus()
+    } catch (e: any) {
+      error.value = String(e)
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function refreshStatus() {
     loading.value = true
     try {
@@ -100,6 +113,7 @@ export function useRtspClient() {
     error,
     connect,
     disconnect,
+    disconnectAll,
     refreshStatus,
     getStatus,
     isConnected,

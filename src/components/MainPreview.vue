@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, inject } from 'vue'
+import { ref, watch, computed, inject, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { CaptureSource, PipelineStatus } from '../types'
 import { isPipelineError, isPipelineRunning } from '../types'
@@ -20,6 +20,8 @@ const { config } = inject<ReturnType<typeof useConfig>>('config')!
 
 // Preview URL for MJPEG stream
 const previewUrl = ref<string>('')
+// Key to force <img> re-creation to establish fresh MJPEG connection
+const imgKey = ref(0)
 
 // Computed preview port from config, fallback to 8090
 const previewPort = computed(() => config.value?.preview_http_port ?? 8090)
@@ -44,28 +46,48 @@ const errorMsg = computed(() => {
   return ''
 })
 
+// Start preview for the given source
+async function startPreview() {
+  if (!props.selectedSource) return
+  try {
+    await invoke('start_preview', { sourceId: props.selectedSource.id })
+    previewUrl.value = `http://127.0.0.1:${previewPort.value}/${props.selectedSource.id}`
+    imgKey.value++ // Force <img> re-creation to establish fresh MJPEG connection
+  } catch (e) {
+    console.error('Failed to start preview:', e)
+    previewUrl.value = ''
+  }
+}
+
+// Stop preview and clear the URL
+async function stopPreview() {
+  previewUrl.value = ''
+  if (!props.selectedSource) return
+  try {
+    await invoke('stop_preview', { sourceId: props.selectedSource.id })
+  } catch (e) {
+    // Ignore errors — source may already be stopped
+  }
+}
+
 // Watch streaming state to start/stop preview
 watch(isRunning, async (running) => {
   if (running && props.selectedSource) {
-    try {
-      await invoke('start_preview', { sourceId: props.selectedSource.id })
-      previewUrl.value = `http://127.0.0.1:${previewPort.value}/${props.selectedSource.id}`
-    } catch (e) {
-      console.error('Failed to start preview:', e)
-      previewUrl.value = ''
-    }
+    await startPreview()
   } else {
-    // Notify backend to clean up preview resources
-    if (props.selectedSource) {
-      try {
-        await invoke('stop_preview', { sourceId: props.selectedSource.id })
-      } catch (e) {
-        // Ignore errors — source may already be stopped
-      }
-    }
-    previewUrl.value = ''
+    await stopPreview()
   }
-}, { immediate: true })
+}, { immediate: false })
+
+// On mount: if pipeline is already running, the preview pipeline should
+// already be active in the backend (we never stop it on unmount).
+// Just set the URL and increment imgKey to establish a fresh MJPEG connection.
+onMounted(() => {
+  if (isRunning.value && props.selectedSource) {
+    previewUrl.value = `http://127.0.0.1:${previewPort.value}/${props.selectedSource.id}`
+    imgKey.value++
+  }
+})
 
 function copyUrl(url: string) {
   navigator.clipboard?.writeText(url)
@@ -113,6 +135,7 @@ function copyUrl(url: string) {
           <template v-if="isRunning">
             <img
               v-if="previewUrl"
+              :key="imgKey"
               :src="previewUrl"
               class="preview-mjpeg"
               alt="Live preview"

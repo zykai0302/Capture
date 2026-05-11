@@ -39,6 +39,7 @@ struct RtspClientHandle {
     protocol: String,
     resolution: Arc<Mutex<Option<(u32, u32)>>>,
     frame_count: Arc<AtomicU64>,
+    last_frame_time: Arc<Mutex<Instant>>,
     started_at: Instant,
     #[allow(dead_code)]
     bus_watch_id: gstreamer::bus::BusWatchGuard,
@@ -127,6 +128,7 @@ impl RtspClientManager {
         let state = Arc::new(Mutex::new(RtspClientState::Connecting));
         let resolution = Arc::new(Mutex::new(None));
         let frame_count = Arc::new(AtomicU64::new(0));
+        let last_frame_time = Arc::new(Mutex::new(Instant::now()));
 
         // Handle pad-added signal on rtspsrc -> link to decodebin
         let decodebin_clone = decodebin.clone();
@@ -180,6 +182,7 @@ impl RtspClientManager {
         let tx_clone = Arc::new(tx);
         let frame_count_clone = frame_count.clone();
         let state_for_sample = state.clone();
+        let last_frame_time_clone = last_frame_time.clone();
 
         appsink.set_callbacks(
             gstreamer_app::AppSinkCallbacks::builder()
@@ -199,6 +202,10 @@ impl RtspClientManager {
                     let data = map.as_slice().to_vec();
                     let _ = tx_clone.send(data);
                     let count = frame_count_clone.fetch_add(1, Ordering::Relaxed);
+                    // Update last frame time
+                    if let Ok(mut t) = last_frame_time_clone.lock() {
+                        *t = Instant::now();
+                    }
                     // Update state to Connected on first frame
                     if count == 0 {
                         log::info!("RTSP client: first frame received, updating state to Connected");
@@ -248,7 +255,10 @@ impl RtspClientManager {
                         }
                     }
                     gstreamer::MessageView::Eos(_) => {
-                        log::warn!("RTSP client pipeline EOS for {}", stream_id_log);
+                        log::warn!("RTSP client pipeline EOS for {}, server stopped streaming", stream_id_log);
+                        if let Ok(mut st) = state_for_bus.lock() {
+                            *st = RtspClientState::Disconnected;
+                        }
                     }
                     gstreamer::MessageView::Warning(w) => {
                         log::warn!("RTSP client pipeline warning for {}: {}", stream_id_log, w.error());
@@ -275,6 +285,7 @@ impl RtspClientManager {
             protocol: protocol.to_string(),
             resolution,
             frame_count,
+            last_frame_time,
             started_at: Instant::now(),
             bus_watch_id,
         };
@@ -368,7 +379,19 @@ impl RtspClientManager {
         let clients = self.clients.lock().unwrap();
         let handle = clients.get(stream_id)?;
 
-        let state = handle.state.lock().unwrap().clone();
+        let state = {
+            let mut st = handle.state.lock().unwrap().clone();
+            // Frame timeout detection: if Connected but no frames for 5s, mark as Offline
+            if matches!(st, RtspClientState::Connected) {
+                let elapsed = handle.last_frame_time.lock().unwrap().elapsed();
+                if elapsed > std::time::Duration::from_secs(5) {
+                    log::warn!("RTSP client {} no frames for {:?}, marking Offline", stream_id, elapsed);
+                    st = RtspClientState::Offline;
+                    *handle.state.lock().unwrap() = RtspClientState::Offline;
+                }
+            }
+            st
+        };
         let resolution = *handle.resolution.lock().unwrap();
 
         // Calculate FPS from frame counter

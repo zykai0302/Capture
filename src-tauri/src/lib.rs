@@ -284,6 +284,18 @@ async fn rtsp_client_disconnect(
 }
 
 #[tauri::command]
+async fn rtsp_client_disconnect_all(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    let manager = state.rtsp_client_manager.clone();
+    tokio::task::spawn_blocking(move || {
+        manager.disconnect_all()
+    })
+    .await
+    .map_err(|e| AppError::RtspClient(format!("Task join error: {}", e)))?
+}
+
+#[tauri::command]
 async fn rtsp_client_status(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<RtspClientStatus>, AppError> {
@@ -417,6 +429,7 @@ pub fn run() {
             stop_preview,
             rtsp_client_connect,
             rtsp_client_disconnect,
+            rtsp_client_disconnect_all,
             rtsp_client_status,
             ws_remote_connect,
             ws_remote_disconnect,

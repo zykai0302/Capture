@@ -29,4 +29,9 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // 4. prevent Vite dep scanner from scanning Rust target/ docs (thousands of HTML files)
+  optimizeDeps: {
+    exclude: ["../src-tauri"],
+  },
 }));

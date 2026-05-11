@@ -36,6 +36,7 @@ provide('wsRemote', wsRemoteStore)
 const appMode = ref<'server' | 'client'>('server')
 const selectedSource = ref<CaptureSource | null>(null)
 const selectedStreamId = ref<string | null>(null)
+const serverModeKey = ref(0) // increment to force MainPreview reconnect on mode switch
 
 const showConfigPanel = ref(false)
 
@@ -48,7 +49,12 @@ function onSelectSource(source: CaptureSource) {
 }
 
 function onModeChange(mode: 'server' | 'client') {
+  if (mode === appMode.value) return
   appMode.value = mode
+  if (mode === 'server') {
+    // Switching back to server mode — force preview reconnect
+    serverModeKey.value++
+  }
 }
 
 async function onStopStream(sourceId: string) {
@@ -70,6 +76,19 @@ async function onDisconnectStream(streamId: string) {
 
 async function onDeleteStream(streamId: string) {
   await rtspClientStore.disconnect(streamId)
+}
+
+async function onReconnectStream(streamId: string) {
+  const status = rtspClientStore.streams.value[streamId]
+  if (!status) return
+  // Disconnect then reconnect with same params
+  await rtspClientStore.disconnect(streamId)
+  try {
+    const newId = await rtspClientStore.connect(status.name, status.url, status.protocol)
+    selectedStreamId.value = newId
+  } catch (e) {
+    console.error('Reconnect failed:', e)
+  }
 }
 
 // Auto-sync RTSP client resolution to WS remote client for coordinate mapping
@@ -107,6 +126,7 @@ watch(
         @select-source="onSelectSource"
       />
       <MainPreview
+        :key="serverModeKey"
         :selected-source="selectedSource"
         :pipeline-status="selectedSource ? pipelineStore.pipelines.value[selectedSource.id] : undefined"
         @stop-stream="onStopStream"
@@ -120,6 +140,7 @@ watch(
         :selected-stream-id="selectedStreamId"
         @select-stream="onSelectStream"
         @disconnect-stream="onDisconnectStream"
+        @reconnect-stream="onReconnectStream"
         @delete-stream="onDeleteStream"
       />
       <RtspPreview :stream-id="selectedStreamId" />

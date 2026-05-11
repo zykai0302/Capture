@@ -24,6 +24,8 @@ fn main() {
 
     log::info!("ScreenCast Pro starting...");
 
+    // Configure GStreamer paths BEFORE gstreamer::init()
+    add_gst_dll_search_path();
     configure_gstreamer_paths();
     configure_gst_plugin_scanner();
 
@@ -41,6 +43,28 @@ fn main() {
     screencast_pro_lib::run();
 
     log::info!("Application exited normally.");
+}
+
+/// Add GStreamer runtime DLL directory to the process search path on Windows.
+/// When packaged, GStreamer DLLs are in <exe_dir>/gstreamer-runtime/bin/
+/// which Windows won't search by default.
+fn add_gst_dll_search_path() {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+
+    // Packaged layout: <exe_dir>/gstreamer-runtime/bin/
+    let gst_bin = exe_dir.join("gstreamer-runtime").join("bin");
+    if gst_bin.is_dir() {
+        // Add to PATH so Windows can find the DLLs
+        if let Ok(path) = std::env::var("PATH") {
+            std::env::set_var("PATH", format!("{};{}", gst_bin.display(), path));
+        } else {
+            std::env::set_var("PATH", gst_bin.to_string_lossy().to_string());
+        }
+        log::info!("Added GStreamer bin to PATH: {}", gst_bin.display());
+    }
 }
 
 /// Configure GST_PLUGIN_PATH based on platform and install layout.
@@ -65,13 +89,19 @@ fn configure_gstreamer_paths() {
 }
 
 fn find_gst_plugin_path(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    // 1. Packaged layout: <exe_dir>/gstreamer-1.0 (all platforms)
-    let packaged = exe_dir.join("gstreamer-1.0");
+    // 1. Packaged layout: <exe_dir>/gstreamer-runtime/lib/gstreamer-1.0
+    let packaged = exe_dir.join("gstreamer-runtime").join("lib").join("gstreamer-1.0");
     if packaged.is_dir() {
         return Some(packaged);
     }
 
-    // 2. Platform-specific development fallbacks
+    // 2. Dev layout: <exe_dir>/gstreamer-1.0 (flat layout)
+    let dev_flat = exe_dir.join("gstreamer-1.0");
+    if dev_flat.is_dir() {
+        return Some(dev_flat);
+    }
+
+    // 3. Platform-specific development fallbacks
     #[cfg(target_os = "windows")]
     {
         if let Ok(root) = std::env::var("GSTREAMER_1_0_ROOT_MSVC_X86_64") {
@@ -84,10 +114,9 @@ fn find_gst_plugin_path(exe_dir: &std::path::Path) -> Option<std::path::PathBuf>
 
     #[cfg(target_os = "macos")]
     {
-        // Homebrew install paths
         let homebrew_paths = [
-            "/opt/homebrew/lib/gstreamer-1.0",       // Apple Silicon
-            "/usr/local/lib/gstreamer-1.0",           // Intel Macs
+            "/opt/homebrew/lib/gstreamer-1.0",
+            "/usr/local/lib/gstreamer-1.0",
         ];
         for path in &homebrew_paths {
             let p = std::path::Path::new(path);
@@ -95,7 +124,6 @@ fn find_gst_plugin_path(exe_dir: &std::path::Path) -> Option<std::path::PathBuf>
                 return Some(p.to_path_buf());
             }
         }
-        // Also check GSTREAMER_1_0_ROOT (official GStreamer macOS installer)
         if let Ok(root) = std::env::var("GSTREAMER_1_0_ROOT") {
             let dev_path = std::path::Path::new(&root).join("lib").join("gstreamer-1.0");
             if dev_path.is_dir() {
@@ -106,7 +134,6 @@ fn find_gst_plugin_path(exe_dir: &std::path::Path) -> Option<std::path::PathBuf>
 
     #[cfg(target_os = "linux")]
     {
-        // Standard Linux GStreamer plugin paths
         let linux_paths = [
             "/usr/lib/x86_64-linux-gnu/gstreamer-1.0",
             "/usr/lib64/gstreamer-1.0",
@@ -143,18 +170,24 @@ fn configure_gst_plugin_scanner() {
 }
 
 fn find_gst_plugin_scanner(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    // 1. Packaged layout: <exe_dir>/gst-plugin-scanner[.exe]
+    // 1. Packaged layout: <exe_dir>/gstreamer-runtime/bin/gst-plugin-scanner[.exe]
     let scanner_name = if cfg!(target_os = "windows") {
         "gst-plugin-scanner.exe"
     } else {
         "gst-plugin-scanner"
     };
-    let packaged = exe_dir.join(scanner_name);
+    let packaged = exe_dir.join("gstreamer-runtime").join("bin").join(scanner_name);
     if packaged.is_file() {
         return Some(packaged);
     }
 
-    // 2. Platform-specific development fallbacks
+    // 2. Flat layout: <exe_dir>/gst-plugin-scanner[.exe]
+    let flat = exe_dir.join(scanner_name);
+    if flat.is_file() {
+        return Some(flat);
+    }
+
+    // 3. Platform-specific development fallbacks
     #[cfg(target_os = "windows")]
     {
         if let Ok(root) = std::env::var("GSTREAMER_1_0_ROOT_MSVC_X86_64") {

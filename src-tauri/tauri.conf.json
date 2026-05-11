@@ -35,6 +35,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "gstreamer-runtime/bin/*.dll",
+      "gstreamer-runtime/lib/gstreamer-1.0/*.dll",
+      "gstreamer-runtime/lib/gstreamer-1.0/gst-plugin-scanner.exe"
+    ],
     "windows": {
       "digestAlgorithm": "sha256"
     },

@@ -134,8 +134,13 @@ impl GstPipelineManager {
         }
 
         // Forward frames from mpsc (appsink) to broadcast (MJPEG clients)
-        let source_id_owned = source_id.to_string();
-        let mjpeg_server = self.mjpeg_server.clone();
+        // Note: we intentionally do NOT clean up the MJPEG source here when
+        // the forwarding loop ends. The source is always removed explicitly
+        // by stop_preview() or stop_pipeline() — removing it here would race
+        // with a concurrent start_preview() that registered a new source
+        // under the same source_id, silently deleting it.
+        let _source_id_owned = source_id.to_string();
+        let _mjpeg_server = self.mjpeg_server.clone();
         tokio::task::spawn_blocking(move || {
             loop {
                 match rx.recv() {
@@ -145,17 +150,6 @@ impl GstPipelineManager {
                     }
                     Err(_) => break,
                 }
-            }
-            // Clean up: remove source from MJPEG server when forwarding ends
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                let mjpeg_server = mjpeg_server.clone();
-                let source_id = source_id_owned;
-                let _ = handle.spawn(async move {
-                    let guard = mjpeg_server.lock().await;
-                    if let Some(server) = guard.as_ref() {
-                        server.remove_source(&source_id).await;
-                    }
-                });
             }
         });
 
@@ -191,17 +185,27 @@ impl GstPipelineManager {
     }
 
     pub async fn stop_preview(&self, source_id: &str) {
-        // Stop preview pipeline
-        {
+        // Stop preview pipeline and remove from MJPEG server.
+        // Only remove MJPEG source if we actually stopped a preview pipeline —
+        // this avoids a race where stop_preview removes a newly-added source
+        // that was registered by a concurrent start_preview call.
+        let had_preview = {
             let mut pipelines = self.pipelines.lock().unwrap();
             if let Some(handle) = pipelines.get_mut(source_id) {
                 if let Some(pp) = handle.preview_pipeline.take() {
                     let _ = pp.stop();
+                    true
+                } else {
+                    false
                 }
+            } else {
+                // Pipeline doesn't exist — don't touch MJPEG server
+                false
             }
+        };
+        if had_preview {
+            self.remove_preview_source(source_id).await;
         }
-        // Remove from MJPEG server
-        self.remove_preview_source(source_id).await;
     }
 }
 

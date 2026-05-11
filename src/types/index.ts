@@ -250,6 +250,10 @@ export function isRtspClientConnected(state: RtspClientState): boolean {
   return state === RtspClientStateEnum.Connected
 }
 
+export function isRtspClientDisconnected(state: RtspClientState): boolean {
+  return state === RtspClientStateEnum.Disconnected || state === RtspClientStateEnum.Offline
+}
+
 export function isRtspClientReconnecting(state: RtspClientState): boolean {
   return typeof state === 'object' && 'Reconnecting' in state
 }

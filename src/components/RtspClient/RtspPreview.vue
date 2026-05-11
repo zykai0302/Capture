@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, inject } from 'vue'
+import { ref, computed, inject, watch } from 'vue'
 import type { useRtspClient, useWsRemote, useConfig } from '../../composables'
-import { isRtspClientConnected, isRtspClientReconnecting, isRtspClientError, MouseButton, ClickAction } from '../../types'
+import { isRtspClientConnected, isRtspClientDisconnected, isRtspClientReconnecting, isRtspClientError, MouseButton, ClickAction } from '../../types'
 
 const props = defineProps<{
   streamId: string | null
@@ -24,6 +24,7 @@ const status = computed(() => {
 
 const isConnected = computed(() => status.value ? isRtspClientConnected(status.value.state) : false)
 const isConnecting = computed(() => status.value?.state === 'Connecting')
+const isDisconnected = computed(() => status.value ? isRtspClientDisconnected(status.value.state) : false)
 const isReconnecting = computed(() => status.value ? isRtspClientReconnecting(status.value.state) : false)
 const isError = computed(() => status.value ? isRtspClientError(status.value.state) : false)
 
@@ -31,6 +32,14 @@ const previewPort = computed(() => config.value?.preview_http_port ?? 8090)
 const previewUrl = computed(() => {
   if (!props.streamId || !isConnected.value) return ''
   return rtspClient.getPreviewUrl(props.streamId, previewPort.value)
+})
+
+// Force re-render of img element when stream reconnects (key changes)
+const imgKey = ref(0)
+watch(previewUrl, (newUrl, oldUrl) => {
+  if (newUrl && newUrl !== oldUrl) {
+    imgKey.value++
+  }
 })
 
 function getRelCoords(event: MouseEvent) {
@@ -110,6 +119,7 @@ function onImgError(event: Event) {
         <div class="preview-canvas" @contextmenu.prevent>
           <template v-if="isConnected && previewUrl">
             <img
+              :key="imgKey"
               :src="previewUrl"
               class="preview-mjpeg"
               :style="{ cursor: controlEnabled ? 'crosshair' : 'default' }"
@@ -141,6 +151,15 @@ function onImgError(event: Event) {
               </svg>
               <div class="error-text">连接失败</div>
               <div class="error-detail">{{ typeof status?.state === 'object' && 'Error' in (status?.state as any) ? (status?.state as any).Error : '' }}</div>
+            </div>
+          </template>
+          <template v-else-if="isDisconnected">
+            <div class="preview-error">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.6">
+                <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+              </svg>
+              <div class="disconnected-text">{{ status?.state === 'Offline' ? '流源离线' : '连接已断开' }}</div>
+              <div class="error-detail">服务器已停止推流，请点击左侧"重连"按钮重新连接</div>
             </div>
           </template>
           <template v-else>
@@ -327,6 +346,7 @@ function onImgError(event: Event) {
 
 .starting-text { color: var(--accent-purple); }
 .error-text { color: var(--accent-red); }
+.disconnected-text { color: var(--text-muted); font-size: 14px; font-weight: 600; margin-top: 12px; }
 .error-detail { font-size: 11px; color: var(--text-muted); max-width: 300px; word-break: break-all; margin-top: 6px; }
 
 @keyframes spin { to { transform: rotate(360deg); } }

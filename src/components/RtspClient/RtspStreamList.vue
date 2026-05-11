@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject } from 'vue'
 import type { useRtspClient } from '../../composables'
-import { getRtspClientStateLabel, isRtspClientConnected, type RtspClientState } from '../../types'
+import { getRtspClientStateLabel, isRtspClientConnected, isRtspClientDisconnected, type RtspClientState } from '../../types'
 
 defineProps<{
   selectedStreamId: string | null
@@ -10,6 +10,7 @@ defineProps<{
 const emit = defineEmits<{
   selectStream: [streamId: string]
   disconnectStream: [streamId: string]
+  reconnectStream: [streamId: string]
   deleteStream: [streamId: string]
 }>()
 
@@ -132,6 +133,7 @@ function getStatusClass(state: RtspClientState): string {
         </div>
         <div class="card-actions">
           <button v-if="isRtspClientConnected(status.state)" class="card-btn btn-disconnect" @click.stop="emit('disconnectStream', streamId)">断开</button>
+          <button v-if="isRtspClientDisconnected(status.state)" class="card-btn btn-reconnect" @click.stop="emit('reconnectStream', streamId)">重连</button>
           <button class="card-btn btn-delete" @click.stop="emit('deleteStream', streamId)">删除</button>
         </div>
       </div>
@@ -348,6 +350,8 @@ function getStatusClass(state: RtspClientState): string {
 }
 
 .btn-disconnect:hover { color: var(--accent-red); border-color: var(--accent-red); }
+.btn-reconnect { color: var(--accent-purple); border-color: rgba(180, 77, 255, 0.3); }
+.btn-reconnect:hover { border-color: var(--accent-purple); }
 .btn-delete:hover { color: var(--accent-red); border-color: var(--accent-red); }
 
 .empty-state {
