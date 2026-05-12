@@ -46,7 +46,8 @@ fn main() {
 }
 
 /// Add GStreamer runtime DLL directory to the process search path on Windows.
-/// When packaged, GStreamer DLLs are in <exe_dir>/gstreamer-runtime/bin/
+/// When packaged, GStreamer DLLs are in <exe_dir>/gstreamer-runtime/bin/ (NSIS)
+/// or <exe_dir>/../resources/gstreamer-runtime/bin/ (MSI/WiX)
 /// which Windows won't search by default.
 fn add_gst_dll_search_path() {
     let exe_dir = std::env::current_exe()
@@ -54,10 +55,38 @@ fn add_gst_dll_search_path() {
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_default();
 
-    // Packaged layout: <exe_dir>/gstreamer-runtime/bin/
-    let gst_bin = exe_dir.join("gstreamer-runtime").join("bin");
+    // Try multiple layout patterns:
+    // 1. NSIS: <exe_dir>/gstreamer-runtime/bin/
+    // 2. MSI:  <exe_dir>/../resources/gstreamer-runtime/bin/
+    let gst_bin = find_resource_path(&exe_dir, &["gstreamer-runtime", "bin"]);
+    let gst_bin = match gst_bin {
+        Some(p) => p,
+        None => return, // No GStreamer runtime found
+    };
+
     if gst_bin.is_dir() {
-        // Add to PATH so Windows can find the DLLs
+        // On Windows, use SetDllDirectoryW to add the GStreamer bin directory
+        // to the DLL search path. This is more reliable than modifying PATH
+        // because LoadLibrary checks SetDllDirectory paths before PATH,
+        // and it correctly handles recursive DLL dependencies
+        // (gstreamer-1.0-0.dll -> glib-2.0-0.dll -> intl-8.dll etc.)
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            let wide: Vec<u16> = std::ffi::OsStr::new(&gst_bin)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let result = unsafe { SetDllDirectoryW(wide.as_ptr()) };
+            if result == 0 {
+                log::warn!("SetDllDirectoryW failed for {}", gst_bin.display());
+            } else {
+                log::info!("SetDllDirectoryW succeeded for {}", gst_bin.display());
+            }
+        }
+
+        // Also add to PATH for child processes (gst-plugin-scanner) and
+        // as fallback for non-Windows platforms
         if let Ok(path) = std::env::var("PATH") {
             std::env::set_var("PATH", format!("{};{}", gst_bin.display(), path));
         } else {
@@ -65,6 +94,40 @@ fn add_gst_dll_search_path() {
         }
         log::info!("Added GStreamer bin to PATH: {}", gst_bin.display());
     }
+}
+
+#[cfg(target_os = "windows")]
+extern "system" {
+    /// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setdlldirectoryw
+    /// Adds a directory to the search path used to locate DLLs for the application.
+    /// Returns nonzero on success.
+    fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
+}
+
+/// Find a resource path that works with both NSIS and MSI (WiX) installers.
+///
+/// NSIS layout: `<exe_dir>/<path_segments...>`
+/// MSI layout:  `<exe_dir>/../resources/<path_segments...>`
+///
+/// Returns the first existing path, preferring NSIS layout (exe_dir relative).
+fn find_resource_path(exe_dir: &std::path::Path, segments: &[&str]) -> Option<std::path::PathBuf> {
+    // 1. NSIS layout: resources next to the exe
+    let nsis_path = segments.iter().fold(exe_dir.to_path_buf(), |acc, s| acc.join(s));
+    if nsis_path.exists() {
+        return Some(nsis_path);
+    }
+
+    // 2. MSI (WiX) layout: resources in <exe_dir>/../resources/
+    let msi_path = segments.iter().fold(
+        exe_dir.join("..").join("resources"),
+        |acc, s| acc.join(s),
+    );
+    if msi_path.exists() {
+        // Canonicalize to resolve the ".." for cleaner paths
+        return Some(msi_path.canonicalize().unwrap_or(msi_path));
+    }
+
+    None
 }
 
 /// Configure GST_PLUGIN_PATH based on platform and install layout.
@@ -89,10 +152,12 @@ fn configure_gstreamer_paths() {
 }
 
 fn find_gst_plugin_path(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    // 1. Packaged layout: <exe_dir>/gstreamer-runtime/lib/gstreamer-1.0
-    let packaged = exe_dir.join("gstreamer-runtime").join("lib").join("gstreamer-1.0");
-    if packaged.is_dir() {
-        return Some(packaged);
+    // 1. Packaged layout: <exe_dir>/gstreamer-runtime/lib/gstreamer-1.0 (NSIS)
+    //    or <exe_dir>/../resources/gstreamer-runtime/lib/gstreamer-1.0 (MSI)
+    if let Some(p) = find_resource_path(exe_dir, &["gstreamer-runtime", "lib", "gstreamer-1.0"]) {
+        if p.is_dir() {
+            return Some(p);
+        }
     }
 
     // 2. Dev layout: <exe_dir>/gstreamer-1.0 (flat layout)
@@ -170,18 +235,30 @@ fn configure_gst_plugin_scanner() {
 }
 
 fn find_gst_plugin_scanner(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    // 1. Packaged layout: <exe_dir>/gstreamer-runtime/bin/gst-plugin-scanner[.exe]
     let scanner_name = if cfg!(target_os = "windows") {
         "gst-plugin-scanner.exe"
     } else {
         "gst-plugin-scanner"
     };
-    let packaged = exe_dir.join("gstreamer-runtime").join("bin").join(scanner_name);
-    if packaged.is_file() {
-        return Some(packaged);
+
+    // 1. Packaged layout: <exe_dir>/gstreamer-runtime/bin/gst-plugin-scanner[.exe] (NSIS)
+    //    or <exe_dir>/../resources/gstreamer-runtime/bin/gst-plugin-scanner[.exe] (MSI)
+    if let Some(p) = find_resource_path(exe_dir, &["gstreamer-runtime", "bin", scanner_name]) {
+        if p.is_file() {
+            return Some(p);
+        }
     }
 
-    // 2. Flat layout: <exe_dir>/gst-plugin-scanner[.exe]
+    // 2. Packaged layout: <exe_dir>/gstreamer-runtime/lib/gstreamer-1.0/gst-plugin-scanner[.exe]
+    //    or <exe_dir>/../resources/gstreamer-runtime/lib/gstreamer-1.0/gst-plugin-scanner[.exe] (MSI)
+    //    (alternative location used by prepare-gstreamer-runtime.ps1)
+    if let Some(p) = find_resource_path(exe_dir, &["gstreamer-runtime", "lib", "gstreamer-1.0", scanner_name]) {
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    // 3. Flat layout: <exe_dir>/gst-plugin-scanner[.exe]
     let flat = exe_dir.join(scanner_name);
     if flat.is_file() {
         return Some(flat);
